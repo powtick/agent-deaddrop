@@ -1,0 +1,606 @@
+#!/usr/bin/env bash
+#
+# deaddrop — dead drops for coding agents.
+#
+# Pass the conversation (or just the final answer) of one agent session to
+# another, via the filesystem. Mechanical extraction from the transcript:
+# zero tokens, deterministic, no daemon, no network.
+#
+# Single-file POSIX bash core (macOS bash 3.2 compatible). Dependency: jq >= 1.6
+# plus coreutils. All comments and output are English by project convention;
+# error text is injected into the model context, so it must guide the next step.
+#
+# Integration is via a UserPromptSubmit-style hook that calls `hook-prompt`
+# (see docs/ADDING-AN-AGENT.md). The hook payload carries transcript_path, so
+# no session-locating machinery is needed.
+
+set -uo pipefail
+
+# ---------------------------------------------------------------------------
+# Paths
+# ---------------------------------------------------------------------------
+
+DEADDROP_DIR="${DEADDROP_DIR:-$HOME/.deaddrop}"
+DROPS_DIR="$DEADDROP_DIR/drops"
+USER_ADAPTERS_DIR="$DEADDROP_DIR/adapters.d"
+
+_resolve_script_dir() {
+	local source="${BASH_SOURCE[0]}" dir
+	while [ -h "$source" ]; do
+		dir="$(cd -P "$(dirname "$source")" && pwd)"
+		source="$(readlink "$source")"
+		case "$source" in
+		/*) ;;
+		*) source="$dir/$source" ;;
+		esac
+	done
+	cd -P "$(dirname "$source")" && pwd
+}
+SCRIPT_DIR="$(_resolve_script_dir)"
+ADAPTERS_DIR="${DEADDROP_ADAPTERS_DIR:-$SCRIPT_DIR/../adapters}"
+
+# ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+die() {
+	printf 'deaddrop: %s\n' "$1" >&2
+	exit "${2:-1}"
+}
+
+need_jq() {
+	command -v jq >/dev/null 2>&1 ||
+		die "jq not found; install it (brew install jq / apt-get install jq)"
+}
+
+# fn_prefix <adapter-name> -> function-name prefix (non-alphanumeric -> _).
+fn_prefix() { printf '%s' "${1//[^a-zA-Z0-9]/_}"; }
+
+# atomic_write <target> : read stdin, write to a same-dir temp, then mv.
+atomic_write() {
+	local target="$1" tmp
+	tmp="$(mktemp "${target}.XXXXXX")" || die "mktemp failed for $target"
+	cat >"$tmp"
+	mv -f "$tmp" "$target"
+}
+
+# make_drop_name <adapter> <title> <scope>
+#   -> "<adapter>-<title 10 chars>-<scope>-<YYYYMMDD-HHMMSS>".
+# scope is full|0|1|2… (see cmd_drop). Slug keeps UTF-8 (incl. CJK).
+make_drop_name() {
+	local adapter="$1" title="$2" scope="$3" slug ts
+	ts="$(date +%Y%m%d-%H%M%S)"
+	slug="$(printf '%s' "$title" | tr '\n\r\t/' '    ' | tr -s ' ' '-' | cut -c1-10 | sed 's/^-*//; s/-*$//')"
+	if [ -n "$slug" ]; then
+		printf '%s-%s-%s-%s' "$adapter" "$slug" "$scope" "$ts"
+	else
+		printf '%s-%s-%s' "$adapter" "$scope" "$ts"
+	fi
+}
+
+# copy_to_clipboard : read stdin into the system clipboard. Non-zero if no tool.
+# Covers macOS, Wayland, X11 and WSL2 (Windows clipboard).
+copy_to_clipboard() {
+	if command -v pbcopy >/dev/null 2>&1; then
+		pbcopy
+	elif command -v wl-copy >/dev/null 2>&1; then
+		wl-copy
+	elif command -v xclip >/dev/null 2>&1; then
+		xclip -selection clipboard
+	elif command -v xsel >/dev/null 2>&1; then
+		xsel --clipboard --input
+	elif command -v clip.exe >/dev/null 2>&1; then
+		clip.exe
+	else
+		cat >/dev/null
+		return 1
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# Adapter loading (built-in first, user adapters.d second, same name overrides)
+# Required functions: sniff, extract. Optional: title, glob, hook_parse.
+# ---------------------------------------------------------------------------
+
+ADAPTERS=""
+
+load_adapters() {
+	local f
+	if [ -d "$ADAPTERS_DIR" ]; then
+		for f in "$ADAPTERS_DIR"/*.sh; do
+			[ -e "$f" ] || continue
+			# shellcheck disable=SC1090
+			. "$f"
+		done
+	fi
+	if [ -d "$USER_ADAPTERS_DIR" ]; then
+		for f in "$USER_ADAPTERS_DIR"/*.sh; do
+			[ -e "$f" ] || continue
+			# shellcheck disable=SC1090
+			. "$f"
+		done
+	fi
+
+	local name pfx req missing validated="" seen=" "
+	for name in $ADAPTERS; do
+		case "$seen" in *" $name "*) continue ;; esac
+		seen="$seen$name "
+		pfx="$(fn_prefix "$name")"
+		missing=""
+		for req in sniff extract; do
+			declare -F "${pfx}_${req}" >/dev/null 2>&1 ||
+				missing="$missing $req"
+		done
+		if [ -n "$missing" ]; then
+			printf 'deaddrop: adapter "%s" disabled, missing function(s):%s\n' \
+				"$name" "$missing" >&2
+		else
+			validated="$validated $name"
+		fi
+	done
+	ADAPTERS="${validated# }"
+}
+
+# detect_adapter <file> -> prints adapter name, or non-zero if none claims it.
+detect_adapter() {
+	local name pfx
+	for name in $ADAPTERS; do
+		pfx="$(fn_prefix "$name")"
+		if "${pfx}_sniff" "$1" 2>/dev/null; then
+			printf '%s' "$name"
+			return 0
+		fi
+	done
+	return 1
+}
+
+# ---------------------------------------------------------------------------
+# drop
+# ---------------------------------------------------------------------------
+
+cmd_drop() {
+	need_jq
+	# Args: <transcript-path> [name] [turns].
+	#   '/'-bearing positional -> path; all-digit -> turns; else -> name.
+	#   turns: (unset)=full session; 0=last agent answer; N=last N rounds of q+a.
+	local turns="" name="" path="" a
+	for a in "$@"; do
+		case "$a" in
+		--*) die "unknown option: $a (usage: deaddrop drop <transcript-path> [name] [turns])" ;;
+		*/*) [ -z "$path" ] && path="$a" || die "too many path arguments: $a" ;;
+		'') ;;
+		*[!0-9]*) [ -z "$name" ] && name="$a" || die "too many arguments: $a" ;;
+		*) turns="$a" ;;
+		esac
+	done
+
+	[ -n "$path" ] ||
+		die "deaddrop drop needs a transcript path (the hook passes it automatically; for manual use: deaddrop drop <transcript-path>)"
+	[ -f "$path" ] || die "transcript not found: $path"
+
+	local adapter pfx
+	adapter="$(detect_adapter "$path")" ||
+		die "no adapter recognizes this transcript format: $path"
+	pfx="$(fn_prefix "$adapter")"
+
+	local stream
+	stream="$("${pfx}_extract" "$path")"
+	[ -n "$stream" ] || die "no conversation content extracted from $path"
+
+	# Title (for auto-naming) comes from the FULL conversation, before slicing.
+	local title=""
+	declare -F "${pfx}_title" >/dev/null 2>&1 && title="$("${pfx}_title" "$path")"
+	[ -n "$title" ] || title="$(printf '%s\n' "$stream" | jq -r 'select(.role == "user") | .text' | head -n1)"
+
+	# turns: 0 = only the final agent answer; N = the last N rounds of q+a
+	# (a round = a user turn plus the agent turn(s) after it); unset = full.
+	local scope="full"
+	if [ -n "$turns" ]; then
+		scope="$turns"
+		if [ "$turns" -eq 0 ]; then
+			stream="$(printf '%s\n' "$stream" | jq -c 'select(.role == "agent")' | tail -n1)"
+		else
+			stream="$(printf '%s\n' "$stream" | jq -s -c --argjson n "$turns" '
+				. as $all
+				| [range(0; length) | select($all[.].role == "user")] as $u
+				| ($u | length) as $nu
+				| (if $nu == 0 then $all elif $n >= $nu then $all else $all[$u[-$n]:] end)
+				| .[]')"
+		fi
+		[ -n "$stream" ] || die "no matching turns in $path"
+	fi
+
+	local tu ta
+	tu="$(printf '%s\n' "$stream" | jq -s '[.[] | select(.role == "user")] | length')"
+	ta="$(printf '%s\n' "$stream" | jq -s '[.[] | select(.role == "agent")] | length')"
+
+	[ -n "$name" ] || name="$(make_drop_name "$adapter" "$title" "$scope")"
+
+	local cwd project session_id created
+	cwd="$PWD"
+	project="$(basename "$cwd")"
+	session_id="$(jq -r 'select(.sessionId? != null) | .sessionId' "$path" 2>/dev/null | head -n1)"
+	created="$(date +%Y-%m-%dT%H:%M:%S%z)"
+
+	local outdir="$DROPS_DIR/$project" out
+	mkdir -p "$outdir"
+	chmod 0700 "$DEADDROP_DIR" "$DROPS_DIR" "$outdir" 2>/dev/null || true
+	out="$outdir/$name.md"
+	[ -f "$out" ] && mv -f "$out" "$out.bak"
+
+	{
+		printf -- '---\n'
+		printf 'drop_version: 1\n'
+		printf 'name: %s\n' "$name"
+		printf 'source_tool: %s\n' "$adapter"
+		printf 'scope: %s\n' "$scope"
+		printf 'project: %s\n' "$project"
+		printf 'cwd: %s\n' "$cwd"
+		[ -n "$session_id" ] && printf 'session_id: %s\n' "$session_id"
+		printf 'session_file: %s\n' "$path"
+		printf 'created: %s\n' "$created"
+		printf 'turns_user: %s\n' "$tu"
+		printf 'turns_agent: %s\n' "$ta"
+		printf -- '---\n\n'
+		printf '%s\n' "$stream" | jq -r \
+			'(if .role == "user" then "## User" else "## Agent" end) + "\n\n" + .text + "\n"'
+	} | atomic_write "$out"
+	chmod 0600 "$out" 2>/dev/null || true
+
+	printf 'dropped as: %s  (%s)\n' "$name" "$scope"
+	printf '  %s user / %s agent turns\n' "$tu" "$ta"
+}
+
+# ---------------------------------------------------------------------------
+# pickup
+# ---------------------------------------------------------------------------
+
+# ordered_drop_files -> drop file paths, newest first (pure mtime, no grouping).
+# The canonical order: pickup_list displays it and `pickup <index>` selects it.
+ordered_drop_files() {
+	# shellcheck disable=SC2012  # ls -t for mtime sort; BSD find lacks -printf
+	ls -t "$DROPS_DIR"/*/*.md 2>/dev/null
+}
+
+PICKUP_LIST_LIMIT="${DEADDROP_LIST_LIMIT:-20}"
+
+# pickup_list [<page>|--all] -> a numbered table (one page of PICKUP_LIST_LIMIT),
+# newest first; non-zero if empty. Columns: # | agent | turns | name. The
+# CJK-heavy name column is last so the fixed-width ASCII columns stay aligned
+# (printf pads by character count, not terminal display width). The row index is
+# the GLOBAL position, so `pickup <index>` stays valid across pages.
+pickup_list() {
+	local arg="${1:-1}" all=0 page=1 size="$PICKUP_LIST_LIMIT"
+	case "$arg" in
+	--all) all=1 ;;
+	'' | *[!0-9]*) page=1 ;;
+	*) page="$arg" ;;
+	esac
+	[ "$page" -ge 1 ] 2>/dev/null || page=1
+
+	local total start end n=0 f agent scope nm disp
+	total="$(ordered_drop_files | grep -c .)"
+	[ "$total" -gt 0 ] || return 1
+	if [ "$all" -eq 1 ]; then
+		start=1
+		end="$total"
+	else
+		start=$(((page - 1) * size + 1))
+		end=$((page * size))
+		[ "$end" -gt "$total" ] && end="$total"
+	fi
+
+	printf '%-3s  %-12s  %-5s  %s\n' '#' 'agent' 'turns' 'name'
+	while IFS= read -r f; do
+		[ -e "$f" ] || continue
+		n=$((n + 1))
+		[ "$n" -lt "$start" ] && continue
+		[ "$n" -gt "$end" ] && break
+		agent="$(sed -n 's/^source_tool: //p' "$f" | head -n1)"
+		scope="$(sed -n 's/^scope: //p' "$f" | head -n1)"
+		nm="$(basename "$f" .md)"
+		disp="$nm"
+		case "$nm" in "$agent"-*) disp="${nm#"$agent"-}" ;; esac
+		printf '%-3s  %-12s  %-5s  %s\n' \
+			"$n" "${agent:-?}" "${scope:-full}" "$(printf '%s' "$disp" | cut -c1-50)"
+	done < <(ordered_drop_files)
+
+	if [ "$all" -eq 0 ] && [ "$total" -gt "$size" ]; then
+		local pages=$(((total + size - 1) / size))
+		printf '(page %s/%s, %s drops total; ' "$page" "$pages" "$total"
+		[ "$page" -lt "$pages" ] && printf 'next: "pickup --page %s"; ' "$((page + 1))"
+		printf 'all: "pickup --all")\n'
+	fi
+}
+
+cmd_pickup() {
+	local name="" copy=0 all=0 page=""
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--copy | -c) copy=1 ;;
+		--all) all=1 ;;
+		--page | -p)
+			page="${2:-1}"
+			shift
+			;;
+		--page=*) page="${1#--page=}" ;;
+		--*) die "unknown option: $1 (usage: deaddrop pickup [name|number] [--copy] [--all] [--page N])" ;;
+		*) [ -z "$name" ] && name="$1" ;;
+		esac
+		shift
+	done
+
+	# No name: print one page of the numbered table.
+	if [ -z "$name" ]; then
+		printf 'Available drops. Say which to load, or "pickup <number>":\n'
+		if [ "$all" -eq 1 ]; then
+			pickup_list --all
+		else
+			pickup_list "${page:-1}"
+		fi || {
+			printf 'deaddrop: no drops yet (%s)\n' "$DROPS_DIR"
+			return 1
+		}
+		return 0
+	fi
+
+	local hit=""
+	case "$name" in
+	*[!0-9]*) ;; # has a non-digit -> a real name; resolve below
+	*)           # all digits -> pick by the index shown in the list
+		hit="$(ordered_drop_files | sed -n "${name}p" | cut -f2-)"
+		[ -n "$hit" ] || die "no drop at index $name (run 'pickup' with no name to see the list)"
+		;;
+	esac
+
+	# Resolve by name: current project first, then global.
+	if [ -z "$hit" ]; then
+		local project="${PWD##*/}"
+		if [ -f "$DROPS_DIR/$project/$name.md" ]; then
+			hit="$DROPS_DIR/$project/$name.md"
+		else
+			local f matches=()
+			for f in "$DROPS_DIR"/*/"$name.md"; do
+				[ -e "$f" ] && matches+=("$f")
+			done
+			if [ "${#matches[@]}" -eq 1 ]; then
+				hit="${matches[0]}"
+			elif [ "${#matches[@]}" -eq 0 ]; then
+				printf 'deaddrop: no drop named "%s".\n' "$name" >&2
+				printf 'available drops:\n' >&2
+				pickup_list >&2 || true
+				exit 1
+			else
+				printf 'deaddrop: multiple drops named "%s":\n' "$name" >&2
+				printf '  %s\n' "${matches[@]}" >&2
+				die "run pickup from the matching project directory to disambiguate"
+			fi
+		fi
+	fi
+
+	if [ "$copy" -eq 1 ]; then
+		if copy_to_clipboard <"$hit"; then
+			printf 'picked up "%s" — paste it into your prompt, add notes, then send.\n' "$(basename "$hit" .md)"
+		else
+			printf 'deaddrop: no clipboard tool (pbcopy/wl-copy/xclip/xsel/clip.exe); printing instead.\n' >&2
+			cat "$hit"
+		fi
+	else
+		cat "$hit"
+	fi
+}
+
+# ---------------------------------------------------------------------------
+# hook-prompt : the integration entrypoint. Reads a UserPromptSubmit-style
+# payload on stdin, and if the prompt is a deaddrop sentinel, runs the action
+# and emits a "block" decision so the sentinel never reaches the model and the
+# result is shown to the user only. Non-sentinel prompts pass through untouched.
+#
+# Sentinels:  >>drop [name] [turns]     >>pickup [name|number]  (">> " space ok)
+# ---------------------------------------------------------------------------
+
+cmd_hook_prompt() {
+	need_jq
+	local tool=""
+	while [ "$#" -gt 0 ]; do
+		case "$1" in
+		--tool)
+			tool="${2:-}"
+			shift 2
+			;;
+		--tool=*)
+			tool="${1#--tool=}"
+			shift
+			;;
+		*) shift ;;
+		esac
+	done
+	[ -n "$tool" ] || die "hook-prompt requires --tool <name>"
+
+	local payload pfx prompt transcript cwd
+	payload="$(cat)"
+	pfx="$(fn_prefix "$tool")"
+	if declare -F "${pfx}_hook_parse" >/dev/null 2>&1; then
+		# Optional adapter mapping: prints three lines prompt/transcript/cwd.
+		{
+			read -r prompt
+			read -r transcript
+			read -r cwd
+		} < <(printf '%s' "$payload" | "${pfx}_hook_parse")
+	else
+		prompt="$(printf '%s' "$payload" | jq -r '.user_prompt // .prompt // empty')"
+		transcript="$(printf '%s' "$payload" | jq -r '.transcript_path // empty')"
+		cwd="$(printf '%s' "$payload" | jq -r '.cwd // empty')"
+	fi
+
+	# Sentinel: ">>" then optional whitespace, then drop/pickup and its args.
+	# Anything else proceeds to the model untouched.
+	case "$prompt" in
+	">>"*) ;;
+	*) exit 0 ;;
+	esac
+	local body args out
+	body="${prompt#>>}"
+	body="${body#"${body%%[![:space:]]*}"}" # strip leading whitespace
+
+	[ -n "$cwd" ] && cd "$cwd" 2>/dev/null || true
+
+	case "$body" in
+	drop | drop\ *)
+		args="${body#drop}"
+		args="${args#"${args%%[![:space:]]*}"}"
+		# shellcheck disable=SC2086  # intentional word-split of sentinel args
+		out="$(cmd_drop "$transcript" $args 2>&1)" || true
+		;;
+	pickup | pickup\ *)
+		args="${body#pickup}"
+		args="${args#"${args%%[![:space:]]*}"}"
+		if [ -z "$args" ]; then
+			out="$(cmd_pickup 2>&1)" || true
+		else
+			# shellcheck disable=SC2086  # intentional word-split of sentinel args
+			out="$(cmd_pickup $args --copy 2>&1)" || true
+		fi
+		;;
+	*) exit 0 ;; # ">>" but not one of our commands -> let it through
+	esac
+
+	# Block the prompt (model never sees it); reason is shown to the user only.
+	jq -n --arg r "$out" '{decision: "block", reason: $r}'
+}
+
+# ---------------------------------------------------------------------------
+# list / rm
+# ---------------------------------------------------------------------------
+
+list_drops() {
+	local f proj nm size created tool found=0
+	for f in "$DROPS_DIR"/*/*.md; do
+		[ -e "$f" ] || continue
+		found=1
+		proj="$(basename "$(dirname "$f")")"
+		nm="$(basename "$f" .md)"
+		size="$(wc -c <"$f" | tr -d ' ')"
+		created="$(sed -n 's/^created: //p' "$f" | head -n1)"
+		tool="$(sed -n 's/^source_tool: //p' "$f" | head -n1)"
+		printf '%s/%s\t%sB\t%s\t%s\n' "$proj" "$nm" "$size" "$created" "$tool"
+	done
+	[ "$found" -eq 1 ]
+}
+
+cmd_list() {
+	list_drops || printf 'no drops yet (%s)\n' "$DROPS_DIR"
+}
+
+cmd_rm() {
+	local target="${1:-}"
+	[ -n "$target" ] || die "usage: deaddrop rm <name|project/name>"
+
+	local f matches=()
+	case "$target" in
+	*/*)
+		f="$DROPS_DIR/$target.md"
+		[ -f "$f" ] && matches+=("$f")
+		;;
+	*)
+		for f in "$DROPS_DIR"/*/"$target.md"; do
+			[ -e "$f" ] && matches+=("$f")
+		done
+		;;
+	esac
+
+	if [ "${#matches[@]}" -eq 0 ]; then
+		die "no drop named \"$target\""
+	elif [ "${#matches[@]}" -gt 1 ]; then
+		printf 'deaddrop: ambiguous "%s", specify project/name:\n' "$target" >&2
+		for f in "${matches[@]}"; do
+			printf '  %s/%s\n' "$(basename "$(dirname "$f")")" "$(basename "$f" .md)" >&2
+		done
+		exit 1
+	fi
+	rm -f "${matches[0]}"
+	printf 'removed: %s\n' "${matches[0]}"
+}
+
+# ---------------------------------------------------------------------------
+# doctor
+# ---------------------------------------------------------------------------
+
+cmd_doctor() {
+	if command -v jq >/dev/null 2>&1; then
+		printf 'OK    jq: %s\n' "$(jq --version)"
+	else
+		printf 'FAIL  jq not found (install: brew install jq / apt-get install jq)\n'
+	fi
+
+	if copy_to_clipboard </dev/null 2>/dev/null; then
+		printf 'OK    clipboard tool present (pickup --copy works)\n'
+	else
+		printf 'WARN  no clipboard tool (pbcopy/wl-copy/xclip/xsel/clip.exe); pickup --copy will print instead\n'
+	fi
+
+	printf 'INFO  deaddrop dir: %s\n' "$DEADDROP_DIR"
+	printf 'INFO  adapters loaded: %s\n' "${ADAPTERS:-<none>}"
+
+	local name pfx pat count x
+	for name in $ADAPTERS; do
+		pfx="$(fn_prefix "$name")"
+		if declare -F "${pfx}_glob" >/dev/null 2>&1; then
+			pat="$("${pfx}_glob")"
+			count=0
+			# shellcheck disable=SC2086
+			for x in $pat; do [ -e "$x" ] && count=$((count + 1)); done
+			printf 'INFO  tool %s: %s session file(s) on this machine\n' "$name" "$count"
+		fi
+	done
+
+	printf 'INFO  integration: install a UserPromptSubmit-style hook that runs\n'
+	printf '      "deaddrop hook-prompt --tool <name>" so ">>drop" / ">>pickup" work.\n'
+}
+
+# ---------------------------------------------------------------------------
+# Dispatch
+# ---------------------------------------------------------------------------
+
+usage() {
+	cat <<'EOF'
+deaddrop — dead drops for coding agents
+
+usage:
+  deaddrop drop <transcript-path> [name] [turns]    save a session as a drop. turns: unset=full;
+                                                    0=last agent answer; N=last N rounds of q+a
+  deaddrop pickup [name|number] [--copy] [--all] [--page N]
+                                                    print a drop (no name -> numbered table, one page);
+                                                    --page N pages; --all lists everything; --copy to clipboard
+  deaddrop list                                     list all drops
+  deaddrop rm <name|project/name>                   remove a drop
+  deaddrop hook-prompt --tool <name>                (hook) handle ">>drop"/">>pickup" from stdin JSON
+  deaddrop doctor                                   self-check environment and integration
+
+Typical use is via the hook: type ">>drop" or ">>pickup <name>" in your agent, and the
+UserPromptSubmit hook runs this offline — the model never sees it.
+EOF
+}
+
+main() {
+	load_adapters
+	local cmd="${1:-}"
+	shift 2>/dev/null || true
+	case "$cmd" in
+	drop) cmd_drop "$@" ;;
+	pickup) cmd_pickup "$@" ;;
+	list) cmd_list "$@" ;;
+	rm) cmd_rm "$@" ;;
+	hook-prompt) cmd_hook_prompt "$@" ;;
+	doctor) cmd_doctor "$@" ;;
+	_extract)
+		# Hidden: _extract <tool> <path>. Used by tests.
+		need_jq
+		"$(fn_prefix "${1:-}")_extract" "${2:-}"
+		;;
+	"" | -h | --help | help) usage ;;
+	*) die "unknown command: $cmd (try: deaddrop help)" ;;
+	esac
+}
+
+main "$@"

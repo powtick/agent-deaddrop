@@ -1,0 +1,14 @@
+{
+  "name": "agent-deaddrop",
+  "description": "Dead drops for coding agents — mechanically extract a session's conversation (user + agent turns) and hand it to another concurrent agent session via the filesystem. Zero tokens, deterministic, no daemon.",
+  "version": "0.1.0",
+  "author": {
+    "name": "powtick"
+  },
+  "license": "MIT",
+  "keywords": [
+    "claude-code-plugin",
+    "agent-handoff",
+    "context"
+  ]
+}

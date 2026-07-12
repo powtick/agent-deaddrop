@@ -1,0 +1,13 @@
+{
+  "name": "agent-deaddrop",
+  "owner": {
+    "name": "powtick"
+  },
+  "plugins": [
+    {
+      "name": "agent-deaddrop",
+      "source": "./",
+      "description": "Dead drops for coding agents — pass conversation context between concurrent agent sessions."
+    }
+  ]
+}

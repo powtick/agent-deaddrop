@@ -1,0 +1,4 @@
+{"role":"user","text":"帮我查一下 hynix 的 HBM 产能"}
+{"role":"agent","text":"SK hynix 的 HBM 主要供应给 NVIDIA。"}
+{"role":"user","text":"第二个问题：美光呢？"}
+{"role":"agent","text":"美光同样在扩产 HBM3E。"}
