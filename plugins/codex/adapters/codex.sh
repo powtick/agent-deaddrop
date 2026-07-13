@@ -1,7 +1,6 @@
 # shellcheck shell=bash
 # Adapter: codex
-# Codex transcripts live at
-# ${CODEX_HOME:-$HOME/.codex}/sessions/Y/M/D/rollout-*.jsonl.
+# Codex transcripts live at ~/.codex/sessions/Y/M/D/rollout-*.jsonl.
 # Contract: required sniff + extract; optional title, glob, hook_parse.
 # All comments/output English. Extract emits normalized
 # {"role":"user|agent","text":"..."} JSONL only; the core renders markdown,
@@ -53,5 +52,5 @@ codex_extract() {
 
 # glob -> session-file glob pattern (used by doctor to detect the tool).
 codex_glob() {
-	printf '%s\n' "${CODEX_HOME:-$HOME/.codex}/sessions/*/*/*/rollout-*.jsonl"
+	printf '%s\n' "$HOME/.codex/sessions/*/*/*/rollout-*.jsonl"
 }
