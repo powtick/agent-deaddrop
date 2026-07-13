@@ -163,6 +163,11 @@ else
 	status=1
 fi
 report "$status" "re-dropping the same name moves the old file to .bak"
+if (cd "$proj" && "$DEADDROP" drop "$fix" -p) >/dev/null 2>&1; then
+	report 1 "drop rejects option-like names that pickup cannot address"
+else
+	report 0 "drop rejects option-like names that pickup cannot address"
+fi
 
 # --- 3. drop turns: 0 = last answer; N = last N rounds ----------------------
 c0="$tmp/dd/drops/myproj/concl0.md"
@@ -220,26 +225,60 @@ report $? "pickup <index> selects a drop by list position"
 
 # pagination: page 1 footer, --page 2 second page, --all no footer.
 cap_out="$(cd "$proj" && DEADDROP_LIST_LIMIT=2 "$DEADDROP" pickup 2>&1)"
-printf '%s' "$cap_out" | grep -q 'page 1/'
+printf '%s' "$cap_out" | grep -q 'page 1/' && printf '%s' "$cap_out" | grep -q 'pickup -n 2' &&
+	printf '%s' "$cap_out" | grep -q 'pickup -a'
 report $? "pickup paginates with a 'page 1/N' footer"
+p2_short_out="$(cd "$proj" && DEADDROP_LIST_LIMIT=2 "$DEADDROP" pickup -n 2 2>&1)"
+printf '%s' "$p2_short_out" | grep -q 'page 2/' && printf '%s\n' "$p2_short_out" | grep -Eq '^3[[:space:]]'
+report $? "pickup -n 2 shows the second page"
 p2_out="$(cd "$proj" && DEADDROP_LIST_LIMIT=2 "$DEADDROP" pickup --page 2 2>&1)"
-printf '%s' "$p2_out" | grep -q 'page 2/'
+printf '%s' "$p2_out" | grep -q 'page 2/' && printf '%s\n' "$p2_out" | grep -Eq '^3[[:space:]]'
 report $? "pickup --page 2 shows the second page"
+p2_eq_out="$(cd "$proj" && DEADDROP_LIST_LIMIT=2 "$DEADDROP" pickup --page=2 2>&1)"
+printf '%s' "$p2_eq_out" | grep -q 'page 2/' && printf '%s\n' "$p2_eq_out" | grep -Eq '^3[[:space:]]'
+report $? "pickup --page=2 shows the second page"
 all_out="$(cd "$proj" && DEADDROP_LIST_LIMIT=2 "$DEADDROP" pickup --all 2>&1)"
 if printf '%s' "$all_out" | grep -q '^(page '; then
 	report 1 "pickup --all shows everything (no page footer)"
 else
 	report 0 "pickup --all shows everything (no page footer)"
 fi
+all_short_out="$(cd "$proj" && DEADDROP_LIST_LIMIT=2 "$DEADDROP" pickup -a 2>&1)"
+if printf '%s' "$all_short_out" | grep -q '^(page '; then
+	report 1 "pickup -a shows everything (no page footer)"
+else
+	report 0 "pickup -a shows everything (no page footer)"
+fi
 
-# --- 6. pickup --copy routes to clipboard (fake tool; no real clobber) -------
+# --- 6. pickup clipboard and explicit print mode -----------------------------
 fakebin="$tmp/fakebin"
 mkdir -p "$fakebin"
-printf '#!/bin/sh\ncat >/dev/null\n' >"$fakebin/pbcopy"
+# shellcheck disable=SC2016 # expanded by the generated fake at runtime
+printf '#!/bin/sh\ncat >"$DEADDROP_CLIPBOARD_CAPTURE"\n: >"$DEADDROP_COPY_MARKER"\n' >"$fakebin/pbcopy"
 chmod +x "$fakebin/pbcopy"
-copy_out="$(cd "$proj" && PATH="$fakebin:$PATH" "$DEADDROP" pickup note1 --copy 2>&1)"
-printf '%s' "$copy_out" | grep -q 'paste'
-report $? "pickup --copy routes to the clipboard with a confirmation"
+copy_marker="$tmp/copy-called"
+copy_capture="$tmp/clipboard-content"
+copy_out="$(cd "$proj" && PATH="$fakebin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$DEADDROP" pickup note1 -c 2>&1)"
+printf '%s' "$copy_out" | grep -q 'paste' && [ -f "$copy_marker" ] && cmp -s "$copy_capture" "$df"
+report $? "pickup -c routes to the clipboard with a confirmation"
+rm -f "$copy_marker" "$copy_capture"
+print_short="$tmp/print-short"
+print_long="$tmp/print-long"
+if (cd "$proj" && PATH="$fakebin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$DEADDROP" pickup note1 -c -p >"$print_short" 2>&1) &&
+	(cd "$proj" && PATH="$fakebin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$DEADDROP" pickup note1 --print --copy >"$print_long" 2>&1) &&
+	cmp -s "$print_short" "$df" && cmp -s "$print_long" "$df" && [ ! -e "$copy_marker" ]; then
+	report 0 "pickup -p/--print overrides --copy regardless of argument order"
+else
+	report 1 "pickup -p/--print overrides --copy regardless of argument order"
+fi
+failbin="$tmp/failbin"
+mkdir -p "$failbin"
+printf '#!/bin/sh\nexit 1\n' >"$failbin/pbcopy"
+chmod +x "$failbin/pbcopy"
+fallback_out="$(cd "$proj" && PATH="$failbin:$PATH" "$DEADDROP" pickup note1 -c 2>&1)"
+printf '%s' "$fallback_out" | grep -q 'clipboard unavailable on this host' &&
+	printf '%s\n' "$fallback_out" | grep -q '^## User'
+report $? "pickup prints the drop when the execution-host clipboard is unavailable"
 
 # --- 7. hook-prompt: sentinel blocks + acts; non-sentinel passes through -----
 payload="$(jq -n --arg tp "$fix" --arg c "$proj" '{user_prompt: ">>drop hooktest", transcript_path: $tp, cwd: $c}')"
@@ -270,6 +309,23 @@ else
 	status=1
 fi
 report "$status" "hook-prompt tolerates a space after >> (\">> drop\")"
+pickup_payload="$(jq -n --arg c "$proj" '{user_prompt: ">>pickup note1", transcript_path: "", cwd: $c}')"
+pickup_hp="$(printf '%s' "$pickup_payload" | PATH="$fakebin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$CLAUDE_PLUGIN/bin/deaddrop" hook-prompt --tool claude-code)"
+printf '%s' "$pickup_hp" | jq -e '.decision == "block" and (.reason | contains("picked up \"note1\""))' >/dev/null 2>&1 &&
+	[ -f "$copy_marker" ] && cmp -s "$copy_capture" "$df"
+report $? "hook-prompt pickup uses the execution host clipboard by default"
+rm -f "$copy_marker" "$copy_capture"
+print_payload="$(jq -n --arg c "$proj" '{user_prompt: ">>pickup note1 -p", transcript_path: "", cwd: $c}')"
+print_hp="$(printf '%s' "$print_payload" | PATH="$fakebin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$CLAUDE_PLUGIN/bin/deaddrop" hook-prompt --tool claude-code)"
+printf '%s' "$print_hp" | jq -e '.decision == "block" and (.reason | contains("## User")) and ((.reason | contains("picked up")) | not)' >/dev/null 2>&1 &&
+	[ ! -e "$copy_marker" ]
+report $? "hook-prompt pickup -p returns the drop without touching the remote clipboard"
+page_payload="$(jq -n --arg c "$proj" '{user_prompt: ">>pickup -n 2", transcript_path: "", cwd: $c}')"
+page_hp="$(printf '%s' "$page_payload" | PATH="$fakebin:$PATH" DEADDROP_LIST_LIMIT=2 DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$CLAUDE_PLUGIN/bin/deaddrop" hook-prompt --tool claude-code)"
+printf '%s' "$page_hp" | jq -e '.decision == "block" and (.reason | contains("page 2/"))' >/dev/null 2>&1 &&
+	printf '%s' "$page_hp" | jq -r '.reason' | grep -Eq '^3[[:space:]]' &&
+	[ ! -e "$copy_marker" ]
+report $? "hook-prompt pickup -n 2 returns the second list page"
 
 codex_payload="$(jq -n --arg tp "$codex_fix" --arg c "$proj" '{
 	session_id: "codex-session", turn_id: "codex-turn",

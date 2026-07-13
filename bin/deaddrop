@@ -78,8 +78,8 @@ make_drop_name() {
 	fi
 }
 
-# copy_to_clipboard : read stdin into the system clipboard. Non-zero if no tool.
-# Covers macOS, Wayland, X11 and WSL2 (Windows clipboard).
+# copy_to_clipboard : read stdin into the execution host's clipboard. Non-zero
+# if no usable tool is available. It does not bridge remote sessions.
 copy_to_clipboard() {
 	if command -v pbcopy >/dev/null 2>&1; then
 		pbcopy
@@ -185,6 +185,9 @@ cmd_drop() {
 		*) turns="$a" ;;
 		esac
 	done
+	case "$name" in
+	-*) die "drop name cannot start with '-': $name (choose a plain name such as handoff)" ;;
+	esac
 
 	[ -n "$path" ] ||
 		die "deaddrop drop needs a transcript path (the hook normally passes it; use a persisted local session, or run: deaddrop drop <transcript-path>)"
@@ -328,23 +331,24 @@ pickup_list() {
 	if [ "$all" -eq 0 ] && [ "$total" -gt "$size" ]; then
 		local pages=$(((total + size - 1) / size))
 		printf '(page %s/%s, %s drops total; ' "$page" "$pages" "$total"
-		[ "$page" -lt "$pages" ] && printf 'next: "pickup --page %s"; ' "$((page + 1))"
-		printf 'all: "pickup --all")\n'
+		[ "$page" -lt "$pages" ] && printf 'next: "pickup -n %s"; ' "$((page + 1))"
+		printf 'all: "pickup -a")\n'
 	fi
 }
 
 cmd_pickup() {
-	local name="" copy=0 all=0 page=""
+	local name="" copy=0 force_print=0 all=0 page=""
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 		--copy | -c) copy=1 ;;
-		--all) all=1 ;;
-		--page | -p)
+		--print | -p) force_print=1 ;;
+		--all | -a) all=1 ;;
+		--page | -n)
 			page="${2:-1}"
 			shift
 			;;
 		--page=*) page="${1#--page=}" ;;
-		--*) die "unknown option: $1 (usage: deaddrop pickup [name|number] [--copy] [--all] [--page N])" ;;
+		-*) die "unknown option: $1 (usage: deaddrop pickup [name|number] [-c|--copy] [-p|--print] [-a|--all] [-n N|--page N])" ;;
 		*) [ -z "$name" ] && name="$1" ;;
 		esac
 		shift
@@ -398,11 +402,13 @@ cmd_pickup() {
 		fi
 	fi
 
-	if [ "$copy" -eq 1 ]; then
+	# Explicit print mode wins over --copy because hook-prompt appends --copy for
+	# selected drops; remote users need a way to keep the content in hook output.
+	if [ "$copy" -eq 1 ] && [ "$force_print" -eq 0 ]; then
 		if copy_to_clipboard <"$hit"; then
 			printf 'picked up "%s" — paste it into your prompt, add notes, then send.\n' "$(basename "$hit" .md)"
 		else
-			printf 'deaddrop: no clipboard tool (pbcopy/wl-copy/xclip/xsel/clip.exe); printing instead.\n' >&2
+			printf 'deaddrop: clipboard unavailable on this host (pbcopy/wl-copy/xclip/xsel/clip.exe); printing instead.\n' >&2
 			cat "$hit"
 		fi
 	else
@@ -416,7 +422,8 @@ cmd_pickup() {
 # and emits a "block" decision so the sentinel never reaches the model and the
 # result is shown to the user only. Non-sentinel prompts pass through untouched.
 #
-# Sentinels:  >>drop [name] [turns]     >>pickup [name|number]  (">> " space ok)
+# Sentinels: >>drop [name] [turns] / >>pickup [name|number] [-p]
+# (">> " space is accepted).
 # ---------------------------------------------------------------------------
 
 cmd_hook_prompt() {
@@ -481,6 +488,7 @@ cmd_hook_prompt() {
 		if [ -z "$args" ]; then
 			out="$(cmd_pickup 2>&1)" || true
 		else
+			# --copy is the local default; a user-supplied -p remains authoritative.
 			# shellcheck disable=SC2086  # intentional word-split of sentinel args
 			out="$(cmd_pickup $args --copy 2>&1)" || true
 		fi
@@ -557,9 +565,9 @@ cmd_doctor() {
 	fi
 
 	if copy_to_clipboard </dev/null 2>/dev/null; then
-		printf 'OK    clipboard tool present (pickup --copy works)\n'
+		printf 'OK    clipboard tool present on this host (pickup -c works here)\n'
 	else
-		printf 'WARN  no clipboard tool (pbcopy/wl-copy/xclip/xsel/clip.exe); pickup --copy will print instead\n'
+		printf 'WARN  clipboard unavailable on this host (pbcopy/wl-copy/xclip/xsel/clip.exe); pickup -c will print instead\n'
 	fi
 
 	printf 'INFO  deaddrop dir: %s\n' "$DEADDROP_DIR"
@@ -592,9 +600,11 @@ deaddrop — dead drops for coding agents
 usage:
   deaddrop drop <transcript-path> [name] [turns]    save a session as a drop. turns: unset=full;
                                                     0=last agent answer; N=last N rounds of q+a
-  deaddrop pickup [name|number] [--copy] [--all] [--page N]
+  deaddrop pickup [name|number] [-c|--copy] [-p|--print] [-a|--all] [-n N|--page N]
                                                     print a drop (no name -> numbered table, one page);
-                                                    --page N pages; --all lists everything; --copy to clipboard
+                                                    -n N selects a page; -a lists everything;
+                                                    -c writes to the execution-host clipboard;
+                                                    -p forces output and overrides -c (for remote CLI)
   deaddrop list                                     list all drops
   deaddrop rm <name|project/name>                   remove a drop
   deaddrop hook-prompt --tool <name>                (hook) handle ">>drop"/">>pickup" from stdin JSON

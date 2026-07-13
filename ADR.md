@@ -57,7 +57,7 @@
 
 ### ADR-003 使用接口:提交前哨兵 hook(离线),弃用 slash command
 
-**决定**:唯一接入方式是**"用户提交前 hook" + 输入哨兵**。用户在输入框打 `>>drop [name] [turns]` / `>>pickup [name|number]`(`>>` 后可带空格)回车,hook(命令 `deaddrop hook-prompt --tool <name>`)从 stdin payload 拿 `user_prompt`/`transcript_path`/`cwd`,命中哨兵则执行并输出 `{"decision":"block","reason":<结果>}`(`exit 0`)——**该输入被拦截、从 transcript 抹除、模型永不可见,结果只给用户**;非哨兵 `exit 0` 无输出放行。**弃用 slash command**(2026-07 用户定,完全重构)。
+**决定**:唯一接入方式是**"用户提交前 hook" + 输入哨兵**。用户在输入框打 `>>drop [name] [turns]` / `>>pickup [name|number] [-p]`(`>>` 后可带空格)回车,hook(命令 `deaddrop hook-prompt --tool <name>`)从 stdin payload 拿 `user_prompt`/`transcript_path`/`cwd`,命中哨兵则执行并输出 `{"decision":"block","reason":<结果>}`(`exit 0`)——**该输入被拦截、从 transcript 抹除、模型永不可见,结果只给用户**;非哨兵 `exit 0` 无输出放行。**弃用 slash command**(2026-07 用户定,完全重构)。
 
 **理由**:离线(模型无感知)是硬要求,而 slash command 做不到。且 hook 的 payload 直接给 `transcript_path`,drop 无需任何会话定位机制(见 ADR-004)。hook 是"离线 + 原生 + 跨 agent"三合一的唯一扩展面。
 
@@ -74,7 +74,8 @@
 **排除项(附能力核验,记此以免重复探索)**:
 - slash command / 自定义命令 **本质是 prompt 模板,必触发模型**;`disable-model-invocation` 只挡 Claude 自触发,`user-invocable:false` 只隐藏入口。
 - 内置命令(`/reload-plugins`、`/clear`)那种离线动作是**客户端二进制原生代码**,`plugin.json`/frontmatter 无任何"command type / 本地执行 / 输出抑制"字段可复制它——架构边界,非配置项。
-- Claude Code **无 composer 预填 API**:故 **pickup 的"内容进输入框待编辑"不可得**。pickup 输出改走**剪贴板**(`--copy`,`reason` 回一行"已复制,粘贴进输入框加说明再发"),或 `reason` 回显(小内容);用户 `Cmd+V` 是最接近的等价。
+- Claude Code **无 composer 预填 API**:故 **pickup 的"内容进输入框待编辑"不可得**。pickup 默认走 CLI/hook **执行主机剪贴板**(`-c`/`--copy`,`reason` 回一行"已复制,粘贴进输入框加说明再发");用户 `Cmd+V` 是本机执行时最接近的等价。SSH/远程执行不能把该剪贴板透传到客户端 PC,因此 `-p`/`--print` 作为强制回显开关,始终覆盖 hook 内部追加的 copy 选项,把完整 drop 放进仅用户可见的 `reason` 后由用户本地复制。
+- 不默认采用 OSC 52、反向隧道或本地 helper 桥接远程剪贴板:hook stdout 是结构化 JSON 通道,终端/tmux 支持和长度限制不一致,远端写客户端剪贴板还有安全风险;网络/daemon 方案也违背本项目边界。
 - `!` bang 模式 v2.1.186 起也自动响应(需 `respondToBashCommands:false` 才静默),不作为接入方式。
 
 ### ADR-004 删除会话定位子系统(注册表 + 进程链遍历)

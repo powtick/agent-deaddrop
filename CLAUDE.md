@@ -6,17 +6,17 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## 项目
 
-Agent Dead Drop(CLI 二进制 `deaddrop`):在并发的 AI coding agent 会话之间,**离线**传递对话精华(或只传最后一轮结论)。纯脚本机械抽取 transcript,零 token、确定性、无 daemon、无网络。
+Agent Dead Drop(CLI 二进制 `deaddrop`):在并发的 AI coding agent 会话之间,**离线**传递对话精华(或只传最后一轮结论)。纯脚本机械抽取 transcript,抽取阶段零模型调用、确定性、无 daemon、无网络。
 
-接入方式是**提交前哨兵 hook**:用户在输入框打 `>>drop` / `>>pickup`,hook 拦截该输入并执行,**模型全程无感知**(不是 slash command——那必触发模型)。
+接入方式是**提交前哨兵 hook**:用户在输入框打 `>>drop` / `>>pickup`,hook 拦截该输入并执行,**哨兵执行阶段模型无感知**(不是 slash command——那必触发模型);pickup 内容经用户粘贴并发送后是普通模型上下文。
 
 **`DESIGN.md` 是权威设计文档**,动手前先读相关章节。决策与外部事实见 `ADR.md`;接入新 agent 见 `docs/ADDING-AN-AGENT.md`。
 
 ## 技术栈
 
 - 核心 `bin/deaddrop`:单文件 POSIX bash,兼容 macOS bash 3.2,可被 zsh 调用
-- 平台:macOS、Linux 一等;Windows 仅经 WSL2(原生 cmd/PowerShell/Git Bash 不支持,见 ADR-002)
-- 运行时依赖:`jq ≥ 1.6` + coreutils;pickup `--copy` 另需剪贴板工具
+- 平台:macOS、Linux 一等;Windows 的受支持路径为 WSL2;原生 cmd/PowerShell/Git Bash 尚未适配或验证,当前不保证兼容(见 ADR-002)
+- 运行时依赖:`jq ≥ 1.6` + coreutils;pickup `-c`/`--copy` 另需执行主机的剪贴板工具;SSH/远程 CLI 用 `>>pickup NAME -p` 强制回显,不尝试跨主机写客户端剪贴板
 - 无用户侧 build 步骤;无 npm 发包。`main` 只维护 canonical 源与 packaging 模板;agent 安装使用 `marketplace` 发布分支里已物化的自包含 plugin
 
 ## 常用命令
@@ -40,6 +40,8 @@ echo '{"user_prompt":">>drop","transcript_path":"<path>","cwd":"<dir>"}' | bin/d
 ## 工作流
 
 **动手前**:读 `DESIGN.md` 相关章节 → 读将改的模块及其现有测试 → 需求与设计有出入就停下确认。改了设计覆盖的行为(drop 文件格式、适配器契约、哨兵/hook 机制、抽取规则)同步更新 `DESIGN.md`,保持文档与代码互相印证。
+
+**用户文档同步**:`README.md`(英文)与 `README.zh-CN.md`(简体中文)是同等权威的面向用户说明,不能漂移;完整示例 `docs/USAGE.md` 与 `docs/USAGE.zh-CN.md` 也遵循同一规则。任何用户可见变化——包括定位/能力/非目标、支持的 agent/平台/依赖、安装/更新/卸载、版本与发布方式、触发指令或 CLI 语法与输出、示例及截图、数据路径、隐私安全、兼容性、已知限制与故障排查——都必须在同一提交中同步更新中英双版;仅内部重构且用户体验不变时可不更新。双版须保持相同的章节顺序和等价的事实、命令、选项、路径、版本、表格、代码块、链接与截图表达(图片可共用,替代文本翻译为对应语言),只翻译自然语言;新增、删除、重排或改写用户文档内容也禁止只改一版。提交前逐节对照,并按当前代码、`DESIGN.md` 与 packaging 实际验证命令示例和截图内回显;任一版本未同步或无法验证都视为未完成。
 
 **提交前**:若当前 `VERSION` 已存在对应 `v<VERSION>` tag,package-impacting 变更(`bin/`、`adapters/`、`packaging/`、`scripts/package-plugins.sh`)必须显式递增根 `VERSION`;未打 tag 的发布候选允许在同一版本继续修复。不要手改 manifest version。随后跑 shellcheck、shfmt、actionlint 与 `tests/run.sh`,全绿才算完成——以闸门绿为准,不以“我觉得写好了”为准。测试随功能走:改抽取必带 fixture + 期望输出;改 drop/pickup/hook-prompt 必覆盖对应断言。`.dist/` 是生成物,不提交。
 
@@ -91,6 +93,6 @@ git push origin "$release_tag"
 
 - 脚本开头 `set -uo pipefail`(**不用 `set -e`**:适配器/命令非零返回是正常控制流)
 - 函数前缀:核心用 `cmd_`/`_`,适配器用 `<工具名>_`(如 `claude_code_extract`)
-- 文档(`.md`)用中文;**代码注释、报错文本、脚本所有 stderr/stdout 输出一律英文**,标识符用英文
+- 内部文档(`.md`)用中文;面向用户的 `README.md`/`docs/USAGE.md` 用英文,对应 `.zh-CN.md` 用简体中文且双版同步。**代码注释、报错文本、脚本所有 stderr/stdout 输出一律英文**,标识符用英文
 - 注释只写"为什么"与约束,不写"这行在做什么"
 - `shellcheck` 与 `shfmt` 提交前必须干净(CI 门禁)
