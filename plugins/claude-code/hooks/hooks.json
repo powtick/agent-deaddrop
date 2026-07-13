@@ -1,0 +1,19 @@
+{
+  "hooks": {
+    "UserPromptSubmit": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/bin/deaddrop",
+            "args": [
+              "hook-prompt",
+              "--tool",
+              "claude-code"
+            ]
+          }
+        ]
+      }
+    ]
+  }
+}

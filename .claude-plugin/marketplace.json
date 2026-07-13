@@ -1,0 +1,14 @@
+{
+  "name": "agent-deaddrop",
+  "description": "Offline conversation handoff plugins for coding agents.",
+  "owner": {
+    "name": "powtick"
+  },
+  "plugins": [
+    {
+      "name": "agent-deaddrop",
+      "source": "./plugins/claude-code",
+      "description": "Dead drops for coding agents — pass conversation context between concurrent agent sessions."
+    }
+  ]
+}
