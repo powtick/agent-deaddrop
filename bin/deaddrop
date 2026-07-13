@@ -66,11 +66,14 @@ atomic_write() {
 
 # make_drop_name <adapter> <title> <scope>
 #   -> "<adapter>-<title 10 chars>-<scope>-<YYYYMMDD-HHMMSS>".
-# scope is full|0|1|2… (see cmd_drop). Slug keeps UTF-8 (incl. CJK).
+# scope is full|0|1|2… (see cmd_drop). Slug keeps UTF-8 (incl. CJK) but folds
+# ASCII punctuation into "-": the name becomes a filename, and characters such
+# as ":" "*" "?" break NTFS/WSL mounts, scp host:path parsing, and Finder.
+# LC_ALL=C keeps tr byte-wise so multibyte sequences pass through untouched.
 make_drop_name() {
 	local adapter="$1" title="$2" scope="$3" slug ts
 	ts="$(date +%Y%m%d-%H%M%S)"
-	slug="$(printf '%s' "$title" | tr '\n\r\t/' '    ' | tr -s ' ' '-' | cut -c1-10 | sed 's/^-*//; s/-*$//')"
+	slug="$(printf '%s' "$title" | LC_ALL=C tr -c 'a-zA-Z0-9._\200-\377-' ' ' | tr -s ' -' '--' | cut -c1-10 | sed 's/^[-.]*//; s/[-.]*$//')"
 	if [ -n "$slug" ]; then
 		printf '%s-%s-%s-%s' "$adapter" "$slug" "$scope" "$ts"
 	else
@@ -80,17 +83,21 @@ make_drop_name() {
 
 # copy_to_clipboard : read stdin into the execution host's clipboard. Non-zero
 # if no usable tool is available. It does not bridge remote sessions.
+# Every tool must run detached from our stdout/stderr: xclip/xsel/wl-copy fork
+# a daemon that keeps serving the selection, and an inherited fd would hold the
+# hook's command-substitution pipe open until the hook times out. Success is
+# the exit code alone.
 copy_to_clipboard() {
 	if command -v pbcopy >/dev/null 2>&1; then
-		pbcopy
+		pbcopy >/dev/null 2>&1
 	elif command -v wl-copy >/dev/null 2>&1; then
-		wl-copy
+		wl-copy >/dev/null 2>&1
 	elif command -v xclip >/dev/null 2>&1; then
-		xclip -selection clipboard
+		xclip -selection clipboard >/dev/null 2>&1
 	elif command -v xsel >/dev/null 2>&1; then
-		xsel --clipboard --input
+		xsel --clipboard --input >/dev/null 2>&1
 	elif command -v clip.exe >/dev/null 2>&1; then
-		clip.exe
+		clip.exe >/dev/null 2>&1
 	else
 		cat >/dev/null
 		return 1

@@ -196,6 +196,16 @@ report $? "turns 2 keeps the last two rounds"
 ls "$tmp"/dd/drops/myproj/claude-code-conversati-full-*.md >/dev/null 2>&1
 report $? "auto-name is <agent>-<title 10 chars>-<scope>-<timestamp>"
 
+# Regression: URL-ish titles once leaked ":" into filenames, which breaks
+# NTFS/WSL mounts, scp host:path parsing, and Finder. Punctuation folds to "-".
+url_fix="$tmp/url-title.jsonl"
+cat "$fix" >"$url_fix"
+printf '{"type":"summary","summary":"https://byt.dance quartet sync","leafUuid":"a3"}\n' >>"$url_fix"
+(cd "$proj" && "$DEADDROP" drop "$url_fix" >/dev/null)
+ls "$tmp"/dd/drops/myproj/claude-code-https-byt-full-*.md >/dev/null 2>&1 &&
+	[ -z "$(find "$tmp/dd/drops/myproj" -name '*[:*?"<>|]*' 2>/dev/null)" ]
+report $? "auto-name folds title punctuation so filenames stay portable"
+
 # Codex metadata uses session_meta.payload.id rather than Claude's sessionId.
 codex_df="$tmp/dd/drops/myproj/codex-note.md"
 (cd "$proj" && "$DEADDROP" drop "$codex_fix" codex-note >/dev/null)
@@ -315,6 +325,23 @@ printf '%s' "$pickup_hp" | jq -e '.decision == "block" and (.reason | contains("
 	[ -f "$copy_marker" ] && cmp -s "$copy_capture" "$df"
 report $? "hook-prompt pickup uses the execution host clipboard by default"
 rm -f "$copy_marker" "$copy_capture"
+# Regression: xclip-style helpers fork a daemon that inherits our fds; if it
+# kept the hook's command-substitution pipe open, the hook would hang until
+# the host's timeout instead of returning right after the copy.
+daemonbin="$tmp/daemonbin"
+mkdir -p "$daemonbin"
+# shellcheck disable=SC2016 # expanded by the generated fake at runtime
+printf '#!/bin/sh\ncat >"$DEADDROP_CLIPBOARD_CAPTURE"\n: >"$DEADDROP_COPY_MARKER"\nsleep 30 &\necho $! >"$DEADDROP_DAEMON_PID"\n' >"$daemonbin/pbcopy"
+chmod +x "$daemonbin/pbcopy"
+daemon_pid_file="$tmp/daemon-pid"
+daemon_start="$(date +%s)"
+daemon_hp="$(printf '%s' "$pickup_payload" | PATH="$daemonbin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" DEADDROP_DAEMON_PID="$daemon_pid_file" "$CLAUDE_PLUGIN/bin/deaddrop" hook-prompt --tool claude-code)"
+daemon_elapsed=$(($(date +%s) - daemon_start))
+[ -s "$daemon_pid_file" ] && kill "$(cat "$daemon_pid_file")" 2>/dev/null
+printf '%s' "$daemon_hp" | jq -e '.decision == "block" and (.reason | contains("picked up \"note1\""))' >/dev/null 2>&1 &&
+	[ -f "$copy_marker" ] && cmp -s "$copy_capture" "$df" && [ "$daemon_elapsed" -lt 10 ]
+report $? "hook-prompt pickup returns promptly when the clipboard helper daemonizes"
+rm -f "$copy_marker" "$copy_capture" "$daemon_pid_file"
 print_payload="$(jq -n --arg c "$proj" '{user_prompt: ">>pickup note1 -p", transcript_path: "", cwd: $c}')"
 print_hp="$(printf '%s' "$print_payload" | PATH="$fakebin:$PATH" DEADDROP_COPY_MARKER="$copy_marker" DEADDROP_CLIPBOARD_CAPTURE="$copy_capture" "$CLAUDE_PLUGIN/bin/deaddrop" hook-prompt --tool claude-code)"
 printf '%s' "$print_hp" | jq -e '.decision == "block" and (.reason | contains("## User")) and ((.reason | contains("picked up")) | not)' >/dev/null 2>&1 &&

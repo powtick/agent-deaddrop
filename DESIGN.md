@@ -99,7 +99,7 @@ turns_agent: 6
 
 | 子命令 | 行为 |
 |---|---|
-| `drop <transcript路径> [name] [turns]` | 适配器 sniff 认领 → extract 抽取;`turns`(纯数字):不填=整段;`0`=仅最后一轮 agent 回答;`N`=最后 N 轮 q+a(一轮=一个 user turn + 其后的 agent turn)。name 缺省 `<adapter>-<标题前10字>-<scope>-<时间戳>`(scope=full 或 turns 数字;标题取适配器 `title`,如 claude-code 读 summary 行,退化用首条用户消息);写 drop 文件;stdout 回显两行:`dropped as: <name> (<scope>)` + 轮次统计。**path 必填**(hook 自动传;手动用给显式路径) |
+| `drop <transcript路径> [name] [turns]` | 适配器 sniff 认领 → extract 抽取;`turns`(纯数字):不填=整段;`0`=仅最后一轮 agent 回答;`N`=最后 N 轮 q+a(一轮=一个 user turn + 其后的 agent turn)。name 缺省 `<adapter>-<标题前10字>-<scope>-<时间戳>`(scope=full 或 turns 数字;标题取适配器 `title`,如 claude-code 读 summary 行,退化用首条用户消息;标题 slug 保留 UTF-8/CJK,ASCII 标点一律折叠为 `-`——名字要落成文件名,`:` `*` `?` 等会破坏 NTFS/WSL 挂载、scp `host:path` 解析与 Finder,标题全为标点时退化为无 slug 命名);写 drop 文件;stdout 回显两行:`dropped as: <name> (<scope>)` + 轮次统计。**path 必填**(hook 自动传;手动用给显式路径) |
 | `pickup [name\|序号] [-c\|--copy] [-p\|--print] [-a\|--all] [-n N\|--page N]` | 无参数 → 列**纯按时间倒序、全局编号**的表格(列:`# / agent / turns / name`;每页默认 `DEADDROP_LIST_LIMIT`(20)条,超出时显示页码/总数/下一页提示,`-n N` 翻页,`-a` 列全部);`pickup <序号>` 按表格的全局位置选,`pickup <name>` 按名字选(`drops/<当前project>/<name>.md` → 全局 `drops/*/<name>.md`);默认 cat 到 stdout,`-c`/`--copy` 送到 **CLI/hook 执行主机**的剪贴板,缺工具则打印;显式 `-p`/`--print` 强制 stdout 并始终覆盖 copy,供 SSH/远程 CLI 通过 hook `reason` 回显完整 drop;长选项保留作兼容别名;未命中列表 exit 1 |
 | `hook-prompt --tool <name>` | **集成入口**(§5):从 stdin 读 hook payload,识别哨兵 `>>drop`/`>>pickup` 则执行并输出 `decision:block`(拦截,模型不可见,结果只给用户);非哨兵 exit 0 无输出(输入照常进模型) |
 | `list` | 列出全部 drop:project/name、大小、created、source_tool |
