@@ -16,12 +16,12 @@ Agent Dead Drop 通过本地 Markdown 文件，在并发的 coding agent 会话�
 
 ## 为什么用 Agent Dead Drop？
 
-- **运行时离线：**没有 daemon、网络请求、云服务或遥测。
-- **模型无感知：**`>>drop` 与 `>>pickup` 会在进入 transcript 或触发模型回复前被拦截。
-- **确定性抽取：**Bash 与 `jq` 机械过滤已有 transcript，不让 LLM 总结或改写。
-- **跨 agent 交接：**内置 Claude Code 和 Codex 适配器产出同一种可读 Markdown 格式。
-- **小而可审计：**一个 Bash 核心、每个工具一个适配器，用户侧没有 build 步骤。
-- **默认本地：**drop 留在本地文件系统，使用严格的文件权限，并且没有内置同步。
+- **运行时离线：** 没有 daemon、网络请求、云服务或遥测。
+- **模型无感知：** `>>drop` 与 `>>pickup` 会在进入 transcript 或触发模型回复前被拦截。
+- **确定性抽取：** Bash 与 `jq` 机械过滤已有 transcript，不让 LLM 总结或改写。
+- **跨 agent 交接：** 内置 Claude Code 和 Codex 适配器产出同一种可读 Markdown 格式。
+- **小而可审计：** 一个 Bash 核心、每个工具一个适配器，用户侧没有 build 步骤。
+- **默认本地：** drop 留在本地文件系统，使用严格的文件权限，并且没有内置同步。
 
 ## 工作原理
 
@@ -68,11 +68,9 @@ WSL2 是 Windows 上的受支持路径，因为它提供了 Agent Dead Drop 所�
 
 ## 安装、更新与卸载
 
-请从已发布的 `marketplace` 分支安装。`main` 分支只包含 canonical 源码和打包模板，不是可安装的 marketplace 树。下面两组示例都安装到用户级。
+请从已发布的 `marketplace` 分支安装。`main` 分支只包含 canonical 源码和打包模板，不是可安装的 marketplace 树。
 
-### Codex（用户级）
-
-Codex 没有提供 plugin scope 参数。marketplace 与 plugin 状态保存在用户的 `CODEX_HOME` 下（通常是 `~/.codex`）。
+### Codex
 
 **安装**
 
@@ -83,7 +81,7 @@ codex plugin add agent-deaddrop@agent-deaddrop
 
 安装后启动一个新的、会持久化到本地的会话。
 
-> **Hook review：**Codex 可能提示有新 hook 需要 review。这是预期的安全确认：Agent Dead Drop 会注册一个本地 `UserPromptSubmit` hook，以便在触发指令到达模型前将其拦截。打开 `/hooks`，检查 Agent Dead Drop 命令后选择 trust。完成 trust 前，`>>drop` 与 `>>pickup` 不会运行。Codex 通常会记住信任结果；hook 首次出现或其有效定义发生变化时，可能再次要求 review。
+> **Hook review：** Codex 可能提示有新 hook 需要 review。这是预期的安全确认：Agent Dead Drop 会注册一个本地 `UserPromptSubmit` hook，以便在触发指令到达模型前将其拦截。打开 `/hooks`，检查 Agent Dead Drop 命令后选择 trust。完成 trust 前，`>>drop` 与 `>>pickup` 不会运行。Codex 通常会记住信任结果；hook 首次出现或其有效定义发生变化时，可能再次要求 review。
 
 [![Codex 启动时提示新增或变化的 hook 需要 review](docs/assets/codex-hook-review.png)](docs/assets/codex-hook-review.png)
 
@@ -109,7 +107,7 @@ codex plugin marketplace remove agent-deaddrop
 
 第二条命令可选，用于同时移除 marketplace 注册。
 
-### Claude Code（用户级）
+### Claude Code
 
 **安装**
 
@@ -136,9 +134,9 @@ claude plugin uninstall --scope user agent-deaddrop@agent-deaddrop
 claude plugin marketplace remove --scope user agent-deaddrop
 ```
 
-第二条命令可选，用于同时移除用户级 marketplace 注册。
+第二条命令可选，用于同时移除 marketplace 注册。
 
-如果仓库是 private，安装机器必须已经具备对应的 GitHub 读取权限。plugin 只会把一份内部 `deaddrop` 副本放进对应 agent 的 plugin 中，**不会**在你的 shell 中安装全局 `deaddrop` 命令。
+如果仓库是 private，安装机器必须已经具备对应的 GitHub 读取权限。plugin 只会把一份内部 `deaddrop` 副本放进对应 agent 的 plugin 中，**不会** 在你的 shell 中安装全局 `deaddrop` 命令。
 
 卸载任一 plugin 都不会删除 `~/.deaddrop`。如果不再需要已保存的对话，请另行检查并删除其中的 `.md` 与 `.bak` 文件。
 
@@ -238,7 +236,7 @@ bin/deaddrop rm handoff
 - 存在受支持的剪贴板工具时，默认 pickup 会把所选内容放进 agent CLI 执行主机的剪贴板；使用 `-p` 时则保留在仅用户可见的 hook 回显中。
 - 复用名字会在 `.bak` 文件中保留上一版内容。
 
-> **敏感数据提醒：**除非你明确希望其中的对话和本地路径离开当前机器，否则不要把 `~/.deaddrop` 加进 Git 或同步盘。不再需要时，请同时检查并删除 `.md` 和 `.bak` 文件。
+> **敏感数据提醒：** 除非你明确希望其中的对话和本地路径离开当前机器，否则不要把 `~/.deaddrop` 加进 Git 或同步盘。不再需要时，请同时检查并删除 `.md` 和 `.bak` 文件。
 
 ## 已知限制
 

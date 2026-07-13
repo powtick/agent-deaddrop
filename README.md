@@ -68,11 +68,9 @@ WSL2 is the supported Windows path because it provides the same Linux Bash, `jq`
 
 ## Install, update, and uninstall
 
-Install from the published `marketplace` branch. The `main` branch contains canonical source and packaging templates, not an installable marketplace tree. Both examples below install at user level.
+Install from the published `marketplace` branch. The `main` branch contains canonical source and packaging templates, not an installable marketplace tree.
 
-### Codex (user level)
-
-Codex does not expose a plugin scope option. Marketplace and plugin state are stored under the user's `CODEX_HOME` (normally `~/.codex`).
+### Codex
 
 **Install**
 
@@ -109,7 +107,7 @@ codex plugin marketplace remove agent-deaddrop
 
 The second command is optional and also removes the marketplace registration.
 
-### Claude Code (user level)
+### Claude Code
 
 **Install**
 
@@ -136,7 +134,7 @@ claude plugin uninstall --scope user agent-deaddrop@agent-deaddrop
 claude plugin marketplace remove --scope user agent-deaddrop
 ```
 
-The second command is optional and also removes the user-level marketplace registration.
+The second command is optional and also removes the marketplace registration.
 
 If the repository is private, the installing machine must already have GitHub read access. Plugin installation places a plugin-scoped copy of `deaddrop` inside that agent's plugin; it does **not** install a global `deaddrop` command in your shell.
 
