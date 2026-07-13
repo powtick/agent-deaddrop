@@ -104,3 +104,5 @@
 **代价**:`main` clone 不再能直接作为 marketplace,维护者本地安装须先打包,远程安装必须显式选 `marketplace` ref。任何会改变任一生成包的输入都整体 bump 全局版本,即使只改一个 agent;这是换取单一版本源和发布原子性的成本。private 仓库阶段,远程安装者还必须拥有仓库读取权限。
 
 **排除项**:运行时共享 bin 或 symlink;一个 hook 动态探测 agent;要求用户安装时 build;继续在 `main` 提交重复 payload;每包各自手改 version;CI 自动推断/递增 version;tag 不校验便发布;force push marketplace 历史。
+
+**发布候选补充(2026-07-13)**:`VERSION` 对应 tag 尚不存在时,它只是未发布候选,允许继续修复而不递增;一旦 `v<VERSION>` tag 存在,后续任何 package-affecting 变化都必须先升版。这样首发修复不会被迫从 `0.0.1` 跳到 `0.0.2`,已发布版本仍保持不可变。

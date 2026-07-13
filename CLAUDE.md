@@ -41,7 +41,7 @@ echo '{"user_prompt":">>drop","transcript_path":"<path>","cwd":"<dir>"}' | bin/d
 
 **动手前**:读 `DESIGN.md` 相关章节 → 读将改的模块及其现有测试 → 需求与设计有出入就停下确认。改了设计覆盖的行为(drop 文件格式、适配器契约、哨兵/hook 机制、抽取规则)同步更新 `DESIGN.md`,保持文档与代码互相印证。
 
-**提交前**:package-impacting 变更(`bin/`、`adapters/`、`packaging/`、`scripts/package-plugins.sh`)必须显式 bump 根 `VERSION`;不要手改 manifest version。随后跑 shellcheck、shfmt、actionlint 与 `tests/run.sh`,全绿才算完成——以闸门绿为准,不以“我觉得写好了”为准。测试随功能走:改抽取必带 fixture + 期望输出;改 drop/pickup/hook-prompt 必覆盖对应断言。`.dist/` 是生成物,不提交。
+**提交前**:若当前 `VERSION` 已存在对应 `v<VERSION>` tag,package-impacting 变更(`bin/`、`adapters/`、`packaging/`、`scripts/package-plugins.sh`)必须显式递增根 `VERSION`;未打 tag 的发布候选允许在同一版本继续修复。不要手改 manifest version。随后跑 shellcheck、shfmt、actionlint 与 `tests/run.sh`,全绿才算完成——以闸门绿为准,不以“我觉得写好了”为准。测试随功能走:改抽取必带 fixture + 期望输出;改 drop/pickup/hook-prompt 必覆盖对应断言。`.dist/` 是生成物,不提交。
 
 接入新 agent 见 `docs/ADDING-AN-AGENT.md`;测试自动遍历 `adapters/`,无需改核心。
 
@@ -51,7 +51,7 @@ echo '{"user_prompt":">>drop","transcript_path":"<path>","cwd":"<dir>"}' | bin/d
 
 - `.github/workflows/ci.yml` 在 PR、`main` push 和手动触发时跑 Ubuntu + macOS;macOS 的 `/bin/bash` 覆盖 bash 3.2。
 - 两端都跑 shellcheck、shfmt、actionlint 和 `tests/run.sh`。测试会在临时目录构建完整 Claude/Codex plugin,从生成包执行 hook,并用临时 bare git remote 演练 orphan 首发、幂等重跑、线性升版和降版拒绝。
-- PR 或非首次 `main` push 中,只要 package 输入变化而 `VERSION` 未按 semver 递增,`scripts/check-version-bump.sh <base-sha>` 就失败。纯文档、测试或 workflow 变更不要求 bump。
+- PR 或非首次 `main` push 中,若当前版本已经打 tag,package 输入变化而 `VERSION` 未按 semver 递增就失败;未打 tag 的发布候选可保持版本。纯文档、测试或 workflow 变更不要求 bump。
 
 ### 发布
 

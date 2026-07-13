@@ -80,6 +80,13 @@ git -C "$version_repo" config user.email test@example.com
 git -C "$version_repo" add .
 git -C "$version_repo" commit -qm base
 version_base="$(git -C "$version_repo" rev-parse HEAD)"
+printf 'pre-release package change\n' >>"$version_repo/bin/deaddrop"
+git -C "$version_repo" add bin/deaddrop
+git -C "$version_repo" commit -qm pre-release-package-change
+"$version_repo/scripts/check-version-bump.sh" "$version_base" >/dev/null 2>&1
+report $? "an untagged release candidate can be fixed without changing VERSION"
+git -C "$version_repo" tag v0.0.1
+version_base="$(git -C "$version_repo" rev-parse HEAD)"
 printf 'docs only\n' >>"$version_repo/docs/readme.md"
 git -C "$version_repo" add docs/readme.md
 git -C "$version_repo" commit -qm docs

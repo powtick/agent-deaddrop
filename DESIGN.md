@@ -221,7 +221,7 @@ claude plugin install agent-deaddrop@agent-deaddrop
 
 仓库为 private 时,安装机器须先具备该 GitHub 仓库的认证读取权限。Codex 安装后在新会话用 `/hooks` review/trust。plugin 安装不等于给用户终端全局安装 `deaddrop`;裸 CLI 仍走独立 install 路径。
 
-根 `VERSION` 是所有 plugin manifest 的唯一版本源,首发为 `0.0.1`;不手改模板 manifest 版本。canonical bin、任一 adapter、manifest/hook/catalog 模板或打包逻辑变化,都必须显式 bump 全局 `VERSION`,所以两包一起升版。真正发布由匹配的 `v<VERSION>` tag 触发:改源码/模板 → bump `VERSION` → PR CI → 合并 `main` → 创建并 push tag → 重新 build/test → 更新 `marketplace`。CI 不猜版本、不自动递增;同版本不同内容和版本回退都会被发布器拒绝。
+根 `VERSION` 是所有 plugin manifest 的唯一版本源,首发为 `0.0.1`;不手改模板 manifest 版本。版本未打 tag 前可在同一发布候选上继续修复;一旦存在 `v<VERSION>` tag,canonical bin、任一 adapter、manifest/hook/catalog 模板或打包逻辑再变化就必须显式 bump 全局 `VERSION`,所以两包一起升版。真正发布由匹配的 tag 触发:改源码/模板 → 选定/递增 `VERSION` → PR CI → 合并 `main` → 创建并 push tag → 重新 build/test → 更新 `marketplace`。CI 不猜版本、不自动递增;同版本不同内容和版本回退都会被发布器拒绝。
 
 ---
 
@@ -230,7 +230,7 @@ claude plugin install agent-deaddrop@agent-deaddrop
 - `tests/fixtures/<tool>/sample.jsonl`:脱敏样例,含全部脏数据形态(tool_result、thinking、`<system-reminder`、isMeta、summary);
 - `tests/expected/<tool>/sample.jsonl`:期望的规范化流(抽取输出);
 - `tests/run.sh`:纯 bash 断言——临时构建两次并验证可复现;manifest 注入 `VERSION`;catalog/hook/执行位/无 symlink;payload 与 canonical 一致且每包只有本工具 adapter;抽取 diff;drop/pickup;**从各自生成包执行独立 hook**;版本/tag 门禁;在临时 bare remote 演练 orphan 首发、幂等重跑、线性升版与降版拒绝;
-- `.github/workflows/ci.yml`:PR、`main` push、手动触发;macos-latest + ubuntu-latest(bash 3.2 兼容靠 macOS runner);shellcheck + shfmt + actionlint + 全量测试。package 输入变化而 `VERSION` 未按 semver 递增时失败;
+- `.github/workflows/ci.yml`:PR、`main` push、手动触发;macos-latest + ubuntu-latest(bash 3.2 兼容靠 macOS runner);shellcheck + shfmt + actionlint + 全量测试。已打 tag 的版本若有 package 输入变化而 `VERSION` 未按 semver 递增则失败;
 - `.github/workflows/publish-plugins.yml`:仅 `v*` tag 触发;要求 tag=`v$(cat VERSION)` 且 tag commit 属于 `origin/main`;重新跑完整门禁后生成发布树,用同仓库 `GITHUB_TOKEN` 的 `contents:write` 权限非 force 推送 `marketplace`。发布并发串行排队,workflow 自己的 push 不递归触发 CI。
 
 ---

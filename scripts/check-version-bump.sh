@@ -41,12 +41,16 @@ if git -C "$ROOT" diff --quiet "$BASE"...HEAD -- bin adapters packaging scripts/
 	exit 0
 fi
 
+CURRENT_VERSION="$(cat "$ROOT/VERSION")"
+"$ROOT/scripts/check-release-tag.sh" "v$CURRENT_VERSION" >/dev/null || die "the current VERSION is invalid"
 if git -C "$ROOT" diff --quiet "$BASE"...HEAD -- VERSION; then
-	die "package inputs changed but VERSION did not; bump VERSION before merging"
+	if git -C "$ROOT" rev-parse -q --verify "refs/tags/v$CURRENT_VERSION^{commit}" >/dev/null 2>&1; then
+		die "package inputs changed after v$CURRENT_VERSION was tagged; bump VERSION before merging"
+	fi
+	printf 'package changes remain on untagged version %s\n' "$CURRENT_VERSION"
+	exit 0
 fi
 
-"$ROOT/scripts/check-release-tag.sh" "v$(cat "$ROOT/VERSION")" >/dev/null || die "the updated VERSION is invalid"
-CURRENT_VERSION="$(cat "$ROOT/VERSION")"
 BASE_VERSION="$(git -C "$ROOT" show "$BASE:VERSION" 2>/dev/null || true)"
 if [ -n "$BASE_VERSION" ]; then
 	is_version "$BASE_VERSION" || die "base commit has invalid VERSION '$BASE_VERSION'"

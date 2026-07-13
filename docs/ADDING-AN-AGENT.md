@@ -148,7 +148,7 @@ echo '{"user_prompt":">>drop","transcript_path":"tests/fixtures/<tool>/sample.js
 - [ ] `packaging/plugins/<tool>/`:该平台标准 manifest(不写 version)+ 独立 `hooks/hooks.json`
 - [ ] 平台 marketplace/catalog 模板 entry 的 source 只指向生成的 `./plugins/<tool>`
 - [ ] `scripts/package-plugins.sh` 能发现模板,生成 manifest + hook + 真 `bin/deaddrop` + 仅本工具 adapter,且无 symlink
-- [ ] package-impacting 变更已 bump 根 `VERSION`;没有直接编辑生成 manifest version
+- [ ] 若当前版本已打 tag,package-impacting 变更已 bump 根 `VERSION`;没有直接编辑生成 manifest version
 - [ ] `tests/fixtures/<tool>/sample.jsonl` + `tests/expected/<tool>/sample.jsonl`
 - [ ] `scripts/package-plugins.sh <临时目录>` 与 `--check` 通过
 - [ ] `tests/run.sh` 全绿
