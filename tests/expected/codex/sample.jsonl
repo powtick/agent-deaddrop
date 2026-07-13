@@ -1,0 +1,7 @@
+{"role":"user","text":"检查 Codex rollout 的抽取规则。"}
+{"role":"agent","text":"我先查看记录格式。"}
+{"role":"agent","text":"应以 event_msg 中的最终答复为准。"}
+{"role":"user","text":"旧版本没有 phase 怎么处理？"}
+{"role":"agent","text":"commentary 也是用户可见文本。"}
+{"role":"agent","text":"缺少 phase 时保留，兼容旧版记录。"}
+{"role":"agent","text":"显式 null phase 同样按未知 phase 兼容。"}

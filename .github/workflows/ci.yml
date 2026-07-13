@@ -1,0 +1,81 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
+    steps:
+      - name: Check out source
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go for pinned lint tools
+        # actions/setup-go v6.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install validation tools
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = "macOS" ]; then
+            brew install jq shellcheck
+          else
+            sudo apt-get update
+            sudo apt-get install -y jq shellcheck
+          fi
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Require an explicit package version bump
+        if: github.event_name == 'pull_request' || github.event_name == 'push'
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          PR_BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          PUSH_BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            scripts/check-version-bump.sh "$PR_BASE_SHA"
+          elif [ -n "$PUSH_BEFORE_SHA" ] &&
+            [ "$PUSH_BEFORE_SHA" != "0000000000000000000000000000000000000000" ]; then
+            scripts/check-version-bump.sh "$PUSH_BEFORE_SHA"
+          else
+            echo "Initial branch push: VERSION bump comparison skipped."
+          fi
+
+      - name: Run static checks
+        shell: bash
+        run: |
+          shellcheck bin/deaddrop adapters/*.sh scripts/*.sh tests/run.sh
+          shfmt -d bin/deaddrop adapters/*.sh scripts/*.sh tests/run.sh
+          actionlint
+
+      - name: Run the full test gate
+        shell: bash
+        run: /bin/bash tests/run.sh

@@ -1,0 +1,20 @@
+{
+  "name": "agent-deaddrop",
+  "interface": {
+    "displayName": "Agent Dead Drop"
+  },
+  "plugins": [
+    {
+      "name": "agent-deaddrop",
+      "source": {
+        "source": "local",
+        "path": "./plugins/codex"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}

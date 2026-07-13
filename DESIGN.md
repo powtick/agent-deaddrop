@@ -117,10 +117,12 @@ turns_agent: 6
 每个 agent 装一个"用户提交前"hook(Claude Code 的 `UserPromptSubmit`、Codex 同名、Gemini User Prompt Event、Cursor `beforeSubmitPrompt`),命令为 `deaddrop hook-prompt --tool <name>`。
 
 1. 用户在输入框打哨兵:`>>drop [名字] [轮数]` 或 `>>pickup [名字|序号]`(`>>` 后可带空格),回车。
-2. hook 从 **stdin** 拿 JSON payload,含 `user_prompt`(原文)+ `transcript_path` + `cwd`(字段名非标时由适配器可选 `hook_parse` 映射)。
+2. hook 从 **stdin** 拿 JSON payload,含 prompt 原文 + `transcript_path` + `cwd`:Claude Code 用 `user_prompt`,Codex 用 `prompt`;字段名非标时由适配器可选 `hook_parse` 映射。
 3. `hook-prompt` 判断:
    - **命中哨兵** → `cd $cwd` → 跑 `drop <transcript_path> …` 或 `pickup … --copy` → 输出 `{"decision":"block","reason":<命令结果>}` → 该输入被**拦截、从 transcript 抹除、模型永不可见**;`reason` **只显示给用户**。
    - **未命中** → `exit 0` 且无输出 → 输入照常进模型(不影响正常使用)。
+
+Codex 0.144.1 的 `UserPromptSubmit` 在记录本轮 user message 和模型 sampling **之前**运行;block 后两步都跳过,所以哨兵不进 rollout、也不触发模型。该事件不支持 matcher(配置了也忽略),筛选必须留在 `hook-prompt`;hooks 当前默认开启,`features.codex_hooks` 只是已弃用别名。非 managed hook 首次安装或定义变更后,用户需在 Codex `/hooks` 中 review/trust。
 
 ### 5.2 输出通道(2026-07 核实,务必用对)
 
@@ -129,7 +131,7 @@ turns_agent: 6
 | **exit 0 + `{"decision":"block","reason":…}`** | ✓ | **仅用户**(正解) |
 | `systemMessage` 字段 | — | 仅用户 |
 | `additionalContext` 字段 | — | **进模型**(不用) |
-| exit 2 + stderr | ✓ | stderr **喂给模型**(不用) |
+| exit 2 + stderr | ✓ | 工具间语义不一致;Claude 会进模型上下文,**统一不用** |
 
 drop 的名字/pickup 的确认走 `reason`;pickup 大内容走**剪贴板**(`--copy`),`reason` 只回一行"已复制,粘贴进输入框加说明再发"。
 
@@ -140,7 +142,8 @@ slash command 本质是发给模型的 prompt,用户手输也必触发模型响�
 ### 5.4 已知边界
 
 - **pickup 内容进不了输入框**(无 composer API):`--copy` 送剪贴板 + 用户 `Cmd+V` 是最接近的等价。
-- subagent 里触发哨兵:hook 的 payload 给的是当前(主)会话 transcript,存主会话——视为合理行为。
+- Codex 的 `transcript_path` 类型是 `string|null`;无持久化 transcript 的临时会话不能 drop,错误需引导用户改用持久化本地会话或显式路径。
+- subagent 里触发哨兵时按该工具 payload 指向的当前 transcript 存储;Codex payload 还可能带 `agent_id`/`agent_type`。
 
 ---
 
@@ -176,17 +179,49 @@ claude_code_glob()    { ... }   # 可选 → 会话文件 glob(doctor 探测本�
 - title:取 `type=="summary"` 的 `summary` 行(Claude 会话标题),最后一条。
 - 实测:14.6 MB transcript → 33 KB 对话(压缩 99.8%)。
 
+**codex**(`${CODEX_HOME:-$HOME/.codex}/sessions/Y/M/D/rollout-<ts>-<uuid>.jsonl`):
+
+- 只读 `type=="event_msg"` 的语义事件;user 取 `payload.type=="user_message"` 的 `message`,agent 取 `payload.type=="agent_message"` 的非空 `message`。
+- agent 的 `phase=="commentary"`、`phase=="final_answer"` 与缺失/null phase 都保留:前两者都是用户可见文本,缺失/null 是旧 provider 的兼容路径;显式未知 phase 不猜测。
+- **丢弃**全部 `response_item`(同一消息会重复,且混有 AGENTS/environment/developer 注入)、reasoning、tool call/result、系统/开发者上下文与 inter-agent 事件。
+- `session_id` 取首条 `session_meta.payload.session_id`,旧格式回退 `session_meta.payload.id`;rollout 是内部格式,官方不承诺稳定,必须靠 fixture 锁定兼容行为。
+
 ### 6.3 接入新 agent
 
-= `adapters/<tool>.sh` + hook 接线 + fixture + 期望输出。完整 SOP 见 [docs/ADDING-AN-AGENT.md](docs/ADDING-AN-AGENT.md);测试自动遍历 `adapters/`,贡献者无需读核心代码。
+= canonical `adapters/<tool>.sh` + `packaging/plugins/<tool>/` 下本平台独立的 manifest/hook 模板 + marketplace catalog entry + fixture/期望输出。`scripts/package-plugins.sh` 在临时目录物化自包含的 `plugins/<tool>/`,注入根 `VERSION`,并复制真实 `bin/deaddrop` 与本工具 adapter。完整 SOP 见 [docs/ADDING-AN-AGENT.md](docs/ADDING-AN-AGENT.md);测试自动遍历 `adapters/`,贡献者无需读核心代码。
 
 ---
 
 ## 7. 分发与安装
 
-git clone 仓库,install 脚本把 `bin/` + `adapters/` 复制进 `~/.deaddrop/`,并为检测到的 agent 挂 hook(`deaddrop hook-prompt --tool <name>`)。更新 = 先更新代码库,再重跑 install 覆盖。不发 npm 包(见 ADR)。插件 `bin/` 会自动加入 agent 的 Bash 工具 PATH,故插件启用时 `deaddrop` 可直接作裸命令调用。
+裸 CLI 路径:git clone 仓库,install 脚本把 canonical `bin/` + `adapters/` 复制进 `~/.deaddrop/`,并为检测到的 agent 挂 hook。更新 = 先更新代码库,再重跑 install 覆盖;不发 npm 包(见 ADR)。
 
-Claude Code 插件(L3):`.claude-plugin/plugin.json` + `.claude-plugin/marketplace.json` + `hooks/hooks.json`(`UserPromptSubmit` → `hook-prompt --tool claude-code`)。安装:`/plugin marketplace add <repo>` → `/plugin install agent-deaddrop`。
+agent plugin 采用**源码与发布树分离**:
+
+- `main` 只维护一个 `VERSION`、canonical `bin/deaddrop`、`adapters/*.sh` 以及 `packaging/` 下按 agent 隔离的 manifest/hook/catalog 模板;不提交重复的 bin/adapter payload。
+- `scripts/package-plugins.sh <out>` 将模板复制到生成树,把 `VERSION` 注入每个 manifest,再把 canonical bin 与本平台 adapter 复制为真文件。生成包必须无 symlink、可离开源码仓库独立运行。
+- tag 发布 workflow 把生成树写到独立的 `marketplace` orphan 分支:首个 commit 与 `main` 无共同历史,以后只做非 force 的线性追加。该分支根含 `.claude-plugin/marketplace.json`、`.agents/plugins/marketplace.json`、`VERSION` 与 `plugins/<tool>/`;不含测试、脚本或 canonical 开发树。
+
+发布树中每个平台仍是一个**独立、自包含 plugin root**;hook 不共享,也不在运行时猜 agent:
+
+- `plugins/claude-code/`:`.claude-plugin/plugin.json` + `hooks/hooks.json` + `bin/deaddrop` + `adapters/claude-code.sh`;hook 用 `${CLAUDE_PLUGIN_ROOT}` 定位并固定 `--tool claude-code`。
+- `plugins/codex/`:`.codex-plugin/plugin.json` + `hooks/hooks.json` + `bin/deaddrop` + `adapters/codex.sh`;hook 用 `${PLUGIN_ROOT}` 定位并固定 `--tool codex`。
+
+用户安装拿到的始终是现成自包含 payload,**没有用户侧 build**。从远程安装时必须显式选择发布分支(`main` 不是 marketplace):
+
+```bash
+# Codex
+codex plugin marketplace add powtick/agent-deaddrop --ref marketplace
+codex plugin add agent-deaddrop@agent-deaddrop
+
+# Claude Code
+claude plugin marketplace add powtick/agent-deaddrop@marketplace
+claude plugin install agent-deaddrop@agent-deaddrop
+```
+
+仓库为 private 时,安装机器须先具备该 GitHub 仓库的认证读取权限。Codex 安装后在新会话用 `/hooks` review/trust。plugin 安装不等于给用户终端全局安装 `deaddrop`;裸 CLI 仍走独立 install 路径。
+
+根 `VERSION` 是所有 plugin manifest 的唯一版本源,首发为 `0.0.1`;不手改模板 manifest 版本。canonical bin、任一 adapter、manifest/hook/catalog 模板或打包逻辑变化,都必须显式 bump 全局 `VERSION`,所以两包一起升版。真正发布由匹配的 `v<VERSION>` tag 触发:改源码/模板 → bump `VERSION` → PR CI → 合并 `main` → 创建并 push tag → 重新 build/test → 更新 `marketplace`。CI 不猜版本、不自动递增;同版本不同内容和版本回退都会被发布器拒绝。
 
 ---
 
@@ -194,8 +229,9 @@ Claude Code 插件(L3):`.claude-plugin/plugin.json` + `.claude-plugin/marketplac
 
 - `tests/fixtures/<tool>/sample.jsonl`:脱敏样例,含全部脏数据形态(tool_result、thinking、`<system-reminder`、isMeta、summary);
 - `tests/expected/<tool>/sample.jsonl`:期望的规范化流(抽取输出);
-- `tests/run.sh`:纯 bash 断言——抽取输出 diff 期望;drop full/turns(0/1/2)/重名转 `.bak`/自动命名;pickup 名字/序号/表格/分页/`--copy`;**hook-prompt 哨兵命中拦截+执行、非哨兵放行**;适配器防呆;自动遍历 `adapters/`;
-- CI:GitHub Actions,macos-latest + ubuntu-latest(bash 3.2 兼容靠 macOS runner);shellcheck + shfmt 门禁。
+- `tests/run.sh`:纯 bash 断言——临时构建两次并验证可复现;manifest 注入 `VERSION`;catalog/hook/执行位/无 symlink;payload 与 canonical 一致且每包只有本工具 adapter;抽取 diff;drop/pickup;**从各自生成包执行独立 hook**;版本/tag 门禁;在临时 bare remote 演练 orphan 首发、幂等重跑、线性升版与降版拒绝;
+- `.github/workflows/ci.yml`:PR、`main` push、手动触发;macos-latest + ubuntu-latest(bash 3.2 兼容靠 macOS runner);shellcheck + shfmt + actionlint + 全量测试。package 输入变化而 `VERSION` 未按 semver 递增时失败;
+- `.github/workflows/publish-plugins.yml`:仅 `v*` tag 触发;要求 tag=`v$(cat VERSION)` 且 tag commit 属于 `origin/main`;重新跑完整门禁后生成发布树,用同仓库 `GITHUB_TOKEN` 的 `contents:write` 权限非 force 推送 `marketplace`。发布并发串行排队,workflow 自己的 push 不递归触发 CI。
 
 ---
 
@@ -211,14 +247,14 @@ Claude Code 插件(L3):`.claude-plugin/plugin.json` + `.claude-plugin/marketplac
 
 - **M0 骨架**(已完成):`bin/deaddrop` 全子命令、claude-code 适配器、fixtures + 测试绿。
 - **M1 Claude 端闭环**(进行中):插件本地安装;`${CLAUDE_PLUGIN_ROOT}` 展开、`UserPromptSubmit` hook 挂载、哨兵拦截真机验证。
-- **M2 第二个 agent**:按 SOP 接入 Codex(或其他),验证 `hook_parse` 与跨工具哨兵。
-- **M3 发布**:install.sh、README(英文为主+中文)、MIT License、marketplace 上架、GitHub topics。
+- **M2 第二个 agent**(代码完成):Codex rollout 适配器、Claude/Codex 独立 plugin 模板、生成包阻断/metadata 测试;待真机 trust 后端到端验收。
+- **M3 发布**(流水线完成):`VERSION`/tag 门禁、双平台 CI、orphan `marketplace` 发布与本地 bare remote 演练已完成;首个远程 marketplace 待合并并打 tag,install.sh/README/MIT License/GitHub topics 仍待补。
 
 ### 待实测清单
 
 1. ~~`${CLAUDE_PLUGIN_ROOT}` 展开、`!` 预处理~~ **已验证(2026-07)**;
 2. **`UserPromptSubmit` hook 真机**:CC 是否以约定 payload 触发、`decision:block` 是否如文档拦截且 `reason` 仅给用户(文档确认,待真机);
-3. Codex/Gemini/Cursor 各自 payload 字段与 hook 配置形态(接入时按 SOP 实测);
+3. **Codex 真机**:安装 plugin → `/hooks` trust → 验证 `>>drop` 不进 rollout且模型零调用(官方文档与 0.144.1 源码已确认,待 UI 实测);Gemini/Cursor 仍待接入;
 4. WSL2 端到端(唯一支持的 Windows 环境)。
 
 ---

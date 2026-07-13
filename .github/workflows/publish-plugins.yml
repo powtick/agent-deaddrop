@@ -1,0 +1,89 @@
+name: Publish plugins
+
+on:
+  push:
+    tags:
+      - v*
+
+permissions:
+  contents: write
+
+concurrency:
+  group: marketplace-publish
+  queue: max
+
+jobs:
+  publish:
+    name: Publish marketplace branch
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out tagged source
+        # actions/checkout v7.0.0
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      - name: Set up Go for pinned lint tools
+        # actions/setup-go v6.5.0
+        uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16
+        with:
+          go-version: stable
+          cache: false
+
+      - name: Install validation tools
+        shell: bash
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y jq shellcheck
+          go install mvdan.cc/sh/v3/cmd/shfmt@v3.13.1
+          go install github.com/rhysd/actionlint/cmd/actionlint@v1.7.12
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+
+      - name: Verify tag and source commit
+        shell: bash
+        env:
+          REF_TYPE: ${{ github.ref_type }}
+          TAG_NAME: ${{ github.ref_name }}
+        run: |
+          [ "$REF_TYPE" = "tag" ] || {
+            echo "publish requires a tag ref" >&2
+            exit 1
+          }
+          scripts/check-release-tag.sh "$TAG_NAME"
+          git fetch --quiet origin main
+          source_sha="$(git rev-parse "$TAG_NAME^{commit}")"
+          git merge-base --is-ancestor "$source_sha" origin/main || {
+            echo "tag $TAG_NAME does not point to a commit on origin/main" >&2
+            exit 1
+          }
+          echo "SOURCE_SHA=$source_sha" >> "$GITHUB_ENV"
+
+      - name: Run release validation
+        shell: bash
+        run: |
+          shellcheck bin/deaddrop adapters/*.sh scripts/*.sh tests/run.sh
+          shfmt -d bin/deaddrop adapters/*.sh scripts/*.sh tests/run.sh
+          actionlint
+          /bin/bash tests/run.sh
+
+      - name: Build the marketplace tree
+        shell: bash
+        env:
+          PACKAGE_ROOT: ${{ runner.temp }}/marketplace
+        run: |
+          scripts/package-plugins.sh "$PACKAGE_ROOT"
+          scripts/package-plugins.sh --check "$PACKAGE_ROOT"
+
+      - name: Publish the orphan marketplace branch
+        shell: bash
+        env:
+          PACKAGE_ROOT: ${{ runner.temp }}/marketplace
+          SOURCE_TAG: ${{ github.ref_name }}
+        run: |
+          scripts/publish-marketplace.sh \
+            "$PACKAGE_ROOT" \
+            marketplace \
+            "$GITHUB_WORKSPACE" \
+            "$SOURCE_TAG@$SOURCE_SHA"

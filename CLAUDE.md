@@ -17,14 +17,18 @@ Agent Dead Drop(CLI 二进制 `deaddrop`):在并发的 AI coding agent 会话之
 - 核心 `bin/deaddrop`:单文件 POSIX bash,兼容 macOS bash 3.2,可被 zsh 调用
 - 平台:macOS、Linux 一等;Windows 仅经 WSL2(原生 cmd/PowerShell/Git Bash 不支持,见 ADR-002)
 - 运行时依赖:`jq ≥ 1.6` + coreutils;pickup `--copy` 另需剪贴板工具
-- 无 build 步骤;无 npm 发包,仅 git clone + install 脚本安装
+- 无用户侧 build 步骤;无 npm 发包。`main` 只维护 canonical 源与 packaging 模板;agent 安装使用 `marketplace` 发布分支里已物化的自包含 plugin
 
 ## 常用命令
 
 ```bash
-tests/run.sh          # 全部测试(唯一闸门):抽取 diff + drop/turns + pickup/分页 + hook-prompt 哨兵 + 防呆
-shellcheck bin/deaddrop adapters/*.sh
-shfmt -d bin/deaddrop adapters/*.sh    # -d 只报差异;-w 就地格式化
+tests/run.sh                    # 唯一测试闸门;含临时打包、版本/tag、bare remote 发布演练
+scripts/package-plugins.sh      # 生成 .dist/marketplace;可传其他输出目录
+scripts/package-plugins.sh --check .dist/marketplace
+scripts/check-release-tag.sh "v$(cat VERSION)"
+shellcheck bin/deaddrop adapters/*.sh scripts/*.sh tests/run.sh
+shfmt -d bin/deaddrop adapters/*.sh scripts/*.sh tests/run.sh
+actionlint
 bin/deaddrop doctor   # 自检:jq、剪贴板、适配器、工具探测
 
 # 单跑一个适配器抽取:
@@ -37,9 +41,35 @@ echo '{"user_prompt":">>drop","transcript_path":"<path>","cwd":"<dir>"}' | bin/d
 
 **动手前**:读 `DESIGN.md` 相关章节 → 读将改的模块及其现有测试 → 需求与设计有出入就停下确认。改了设计覆盖的行为(drop 文件格式、适配器契约、哨兵/hook 机制、抽取规则)同步更新 `DESIGN.md`,保持文档与代码互相印证。
 
-**提交前**:`tests/run.sh` 全绿才算完成——以闸门绿为准,不以"我觉得写好了"为准。测试随功能走:改抽取必带 fixture + 期望输出;改 drop/pickup/hook-prompt 必覆盖对应断言。
+**提交前**:package-impacting 变更(`bin/`、`adapters/`、`packaging/`、`scripts/package-plugins.sh`)必须显式 bump 根 `VERSION`;不要手改 manifest version。随后跑 shellcheck、shfmt、actionlint 与 `tests/run.sh`,全绿才算完成——以闸门绿为准,不以“我觉得写好了”为准。测试随功能走:改抽取必带 fixture + 期望输出;改 drop/pickup/hook-prompt 必覆盖对应断言。`.dist/` 是生成物,不提交。
 
 接入新 agent 见 `docs/ADDING-AN-AGENT.md`;测试自动遍历 `adapters/`,无需改核心。
+
+## 测试与发布流水线
+
+### CI
+
+- `.github/workflows/ci.yml` 在 PR、`main` push 和手动触发时跑 Ubuntu + macOS;macOS 的 `/bin/bash` 覆盖 bash 3.2。
+- 两端都跑 shellcheck、shfmt、actionlint 和 `tests/run.sh`。测试会在临时目录构建完整 Claude/Codex plugin,从生成包执行 hook,并用临时 bare git remote 演练 orphan 首发、幂等重跑、线性升版和降版拒绝。
+- PR 或非首次 `main` push 中,只要 package 输入变化而 `VERSION` 未按 semver 递增,`scripts/check-version-bump.sh <base-sha>` 就失败。纯文档、测试或 workflow 变更不要求 bump。
+
+### 发布
+
+`VERSION` 用单行稳定 semver `X.Y.Z`;tag 才是生产发布触发器,只提交/合并 VERSION 不会发布。流程:
+
+```bash
+# 1. 随 package-impacting 代码显式递增 VERSION;首发版本为 0.0.1
+# 2. 在最新 main 上做本地预检
+release_tag="v$(cat VERSION)"
+scripts/check-release-tag.sh "$release_tag"
+tests/run.sh
+
+# 3. main 已在远程后创建并推 tag;首次发布要先 push main
+git tag "$release_tag"
+git push origin "$release_tag"
+```
+
+`.github/workflows/publish-plugins.yml` 仅响应 `v*` tag。它验证 tag=`v$(cat VERSION)`、tag commit 属于 `origin/main`,重新跑完整静态检查和测试,生成自包含树,再用同仓库 `GITHUB_TOKEN` 非 force 推到 orphan `marketplace` 分支。发布任务串行排队;同版本不同内容、旧版本回退和非 fast-forward 推送都会失败。仓库默认 token 权限保持 read,只有该 workflow 显式声明 `contents:write`;无需 PAT。当前仓库为 private,远程安装/更新者必须有 GitHub 读取权限。
 
 ## 硬约束
 
@@ -52,6 +82,10 @@ echo '{"user_prompt":">>drop","transcript_path":"<path>","cwd":"<dir>"}' | bin/d
 - drop 文件 frontmatter 带 `drop_version`;改格式契约必须升版本
 - **hook 输出通道**:拦截 + 结果只给用户 = `exit 0` + `{"decision":"block","reason":…}`;**绝不用** `additionalContext` 或 exit-2 stderr(都进模型)
 - 数据布局:`~/.deaddrop/` 下 `drops/<project>/`(数据)、`adapters.d/`(用户扩展)分开
+- 每个 agent 在 `packaging/plugins/<tool>/` 维护独立 manifest + `hooks/hooks.json`;hook 不共享,不在运行时猜 agent
+- 生成产物的 `plugins/<tool>/` 必须含 manifest、独立 hook、真实 `bin/deaddrop`、且只含本工具 adapter;禁止任何 symlink
+- 根 `bin/`/`adapters/` 是唯一代码源;`scripts/package-plugins.sh` 机械物化副本并从根 `VERSION` 注入所有 manifest version
+- `main` 不提交生成的 `plugins/`/catalog;可安装的完整树只发布到 `marketplace` 分支,用户侧不 build
 
 ## 代码风格
 

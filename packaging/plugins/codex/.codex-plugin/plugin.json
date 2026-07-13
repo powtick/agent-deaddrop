@@ -1,0 +1,28 @@
+{
+  "name": "agent-deaddrop",
+  "description": "Offline dead drops for passing conversation context between concurrent coding-agent sessions.",
+  "author": {
+    "name": "powtick"
+  },
+  "license": "MIT",
+  "keywords": [
+    "codex-plugin",
+    "agent-handoff",
+    "context"
+  ],
+  "interface": {
+    "displayName": "Agent Dead Drop",
+    "shortDescription": "Offline context handoff between coding agents.",
+    "longDescription": "Mechanically extract user and agent turns into a local dead drop, then pick them up from another concurrent coding-agent session.",
+    "developerName": "powtick",
+    "category": "Productivity",
+    "capabilities": [
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      ">>drop",
+      ">>pickup"
+    ]
+  }
+}

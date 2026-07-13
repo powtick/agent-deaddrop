@@ -167,15 +167,27 @@ cmd_drop() {
 	for a in "$@"; do
 		case "$a" in
 		--*) die "unknown option: $a (usage: deaddrop drop <transcript-path> [name] [turns])" ;;
-		*/*) [ -z "$path" ] && path="$a" || die "too many path arguments: $a" ;;
+		*/*)
+			if [ -z "$path" ]; then
+				path="$a"
+			else
+				die "too many path arguments: $a"
+			fi
+			;;
 		'') ;;
-		*[!0-9]*) [ -z "$name" ] && name="$a" || die "too many arguments: $a" ;;
+		*[!0-9]*)
+			if [ -z "$name" ]; then
+				name="$a"
+			else
+				die "too many arguments: $a"
+			fi
+			;;
 		*) turns="$a" ;;
 		esac
 	done
 
 	[ -n "$path" ] ||
-		die "deaddrop drop needs a transcript path (the hook passes it automatically; for manual use: deaddrop drop <transcript-path>)"
+		die "deaddrop drop needs a transcript path (the hook normally passes it; use a persisted local session, or run: deaddrop drop <transcript-path>)"
 	[ -f "$path" ] || die "transcript not found: $path"
 
 	local adapter pfx
@@ -219,7 +231,15 @@ cmd_drop() {
 	local cwd project session_id created
 	cwd="$PWD"
 	project="$(basename "$cwd")"
-	session_id="$(jq -r 'select(.sessionId? != null) | .sessionId' "$path" 2>/dev/null | head -n1)"
+	session_id="$(jq -r '
+		if .sessionId? != null then
+			.sessionId
+		elif .type? == "session_meta" then
+			(.payload.session_id? // .payload.id? // empty)
+		else
+			empty
+		end
+	' "$path" 2>/dev/null | head -n1)"
 	created="$(date +%Y-%m-%dT%H:%M:%S%z)"
 
 	local outdir="$DROPS_DIR/$project" out
@@ -405,7 +425,8 @@ cmd_hook_prompt() {
 	while [ "$#" -gt 0 ]; do
 		case "$1" in
 		--tool)
-			tool="${2:-}"
+			[ "$#" -ge 2 ] || die "hook-prompt option --tool requires a name; verify the plugin hooks/hooks.json"
+			tool="$2"
 			shift 2
 			;;
 		--tool=*)
@@ -415,7 +436,7 @@ cmd_hook_prompt() {
 		*) shift ;;
 		esac
 	done
-	[ -n "$tool" ] || die "hook-prompt requires --tool <name>"
+	[ -n "$tool" ] || die "hook-prompt requires --tool <name>; verify the plugin hooks/hooks.json"
 
 	local payload pfx prompt transcript cwd
 	payload="$(cat)"

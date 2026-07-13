@@ -1,0 +1,21 @@
+{"timestamp":"2026-07-13T01:00:00.000Z","type":"session_meta","payload":{"id":"0190abcd-1234-7000-8000-000000000001","timestamp":"2026-07-13T01:00:00.000Z","cwd":"/Users/example/project","originator":"codex_cli_rs","cli_version":"0.144.1"}}
+{"timestamp":"2026-07-13T01:00:00.010Z","type":"response_item","payload":{"type":"message","role":"developer","content":[{"type":"input_text","text":"Follow repository instructions."}]}}
+{"timestamp":"2026-07-13T01:00:00.020Z","type":"response_item","payload":{"type":"message","role":"system","content":[{"type":"input_text","text":"Internal system instructions."}]}}
+{"timestamp":"2026-07-13T01:00:01.000Z","type":"event_msg","payload":{"type":"user_message","message":"检查 Codex rollout 的抽取规则。","images":[]}}
+{"timestamp":"2026-07-13T01:00:01.010Z","type":"response_item","payload":{"type":"message","role":"user","content":[{"type":"input_text","text":"检查 Codex rollout 的抽取规则。"}]}}
+{"timestamp":"2026-07-13T01:00:02.000Z","type":"event_msg","payload":{"type":"agent_message","message":"我先查看记录格式。","phase":"commentary"}}
+{"timestamp":"2026-07-13T01:00:02.010Z","type":"response_item","payload":{"type":"reasoning","summary":[],"content":null,"encrypted_content":"redacted"}}
+{"timestamp":"2026-07-13T01:00:02.020Z","type":"response_item","payload":{"type":"function_call","name":"exec_command","arguments":"{\"cmd\":\"true\"}","call_id":"call_1"}}
+{"timestamp":"2026-07-13T01:00:02.030Z","type":"response_item","payload":{"type":"function_call_output","call_id":"call_1","output":"Chunk ID: redacted\nProcess exited with code 0"}}
+{"timestamp":"2026-07-13T01:00:02.040Z","type":"event_msg","payload":{"type":"agent_reasoning","text":"Private reasoning must not be extracted."}}
+{"timestamp":"2026-07-13T01:00:03.000Z","type":"event_msg","payload":{"type":"agent_message","message":"应以 event_msg 中的最终答复为准。","phase":"final_answer"}}
+{"timestamp":"2026-07-13T01:00:03.010Z","type":"response_item","payload":{"type":"message","role":"assistant","content":[{"type":"output_text","text":"应以 event_msg 中的最终答复为准。"}],"phase":"final_answer"}}
+{"timestamp":"2026-07-13T01:00:04.000Z","type":"event_msg","payload":{"type":"user_message","message":""}}
+{"timestamp":"2026-07-13T01:00:04.010Z","type":"event_msg","payload":{"type":"agent_message","message":"","phase":"final_answer"}}
+{"timestamp":"2026-07-13T01:00:04.020Z","type":"event_msg","payload":{"type":"collab_agent_spawn_begin","prompt":"Inspect another module.","sender_thread_id":"main","receiver_thread_id":"child"}}
+{"timestamp":"2026-07-13T01:00:04.030Z","type":"event_msg","payload":{"type":"collab_agent_message","message":"Inter-agent result must not be extracted.","sender_thread_id":"child","receiver_thread_id":"main"}}
+{"timestamp":"2026-07-13T01:00:05.000Z","type":"event_msg","payload":{"type":"user_message","message":"旧版本没有 phase 怎么处理？"}}
+{"timestamp":"2026-07-13T01:00:06.000Z","type":"event_msg","payload":{"type":"agent_message","message":"commentary 也是用户可见文本。","phase":"commentary"}}
+{"timestamp":"2026-07-13T01:00:07.000Z","type":"event_msg","payload":{"type":"agent_message","message":"缺少 phase 时保留，兼容旧版记录。"}}
+{"timestamp":"2026-07-13T01:00:08.000Z","type":"event_msg","payload":{"type":"agent_message","message":"显式 null phase 同样按未知 phase 兼容。","phase":null}}
+{"timestamp":"2026-07-13T01:00:09.000Z","type":"event_msg","payload":{"type":"agent_message","message":"分析阶段文本不应保留。","phase":"analysis"}}

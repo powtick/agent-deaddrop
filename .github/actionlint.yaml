@@ -1,0 +1,5 @@
+paths:
+  .github/workflows/publish-plugins.yml:
+    ignore:
+      # GitHub supports concurrency.queue; actionlint 1.7.12 has not added it.
+      - 'unexpected key "queue" for "concurrency" section'

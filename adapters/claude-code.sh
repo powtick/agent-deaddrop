@@ -1,3 +1,4 @@
+# shellcheck shell=bash
 # Adapter: claude-code
 # Claude Code transcripts live at ~/.claude/projects/<escaped-cwd>/<uuid>.jsonl.
 # Contract: required sniff + extract; optional title, glob, hook_parse.
