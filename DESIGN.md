@@ -180,7 +180,7 @@ claude_code_glob()    { ... }   # 可选 → 会话文件 glob(doctor 探测本�
 - title:取 `type=="summary"` 的 `summary` 行(Claude 会话标题),最后一条。
 - 实测:14.6 MB transcript → 33 KB 对话(压缩 99.8%)。
 
-**codex**(`${CODEX_HOME:-$HOME/.codex}/sessions/Y/M/D/rollout-<ts>-<uuid>.jsonl`):
+**codex**(`~/.codex/sessions/Y/M/D/rollout-<ts>-<uuid>.jsonl`;doctor 探测固定用 `~/.codex`,不读 `CODEX_HOME`——实际抽取的 transcript 路径由 hook payload 直接传入,不依赖该 glob):
 
 - 只读 `type=="event_msg"` 的语义事件;user 取 `payload.type=="user_message"` 的 `message`,agent 取 `payload.type=="agent_message"` 的非空 `message`。
 - agent 的 `phase=="commentary"`、`phase=="final_answer"` 与缺失/null phase 都保留:前两者都是用户可见文本,缺失/null 是旧 provider 的兼容路径;显式未知 phase 不猜测。
