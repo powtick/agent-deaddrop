@@ -12,8 +12,6 @@ Agent Dead Drop passes useful conversation context between concurrent coding-age
 
 Saving and retrieving a drop invokes no model and consumes no model tokens. The receiving model only sees the handoff—and uses normal context tokens—after you paste and send it.
 
-> **Compatibility:** use current Claude Code and Codex releases.
-
 ## Why Agent Dead Drop?
 
 - **Offline at runtime:** no daemon, network request, cloud service, or telemetry.

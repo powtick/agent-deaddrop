@@ -12,8 +12,6 @@ Agent Dead Drop 通过本地 Markdown 文件，在并发的 coding agent 会话�
 
 保存和取回 drop 都不会调用模型，也不会消耗模型 token。只有在你把内容粘贴并发送后，接收方模型才会看到这份交接内容，并正常占用上下文 token。
 
-> **兼容性：** 请使用当前版本的 Claude Code 与 Codex。
-
 ## 为什么用 Agent Dead Drop？
 
 - **运行时离线：** 没有 daemon、网络请求、云服务或遥测。
