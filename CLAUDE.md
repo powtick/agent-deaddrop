@@ -41,7 +41,7 @@ echo '{"user_prompt":">>drop","transcript_path":"<path>","cwd":"<dir>"}' | bin/d
 
 **动手前**:读 `DESIGN.md` 相关章节 → 读将改的模块及其现有测试 → 需求与设计有出入就停下确认。改了设计覆盖的行为(drop 文件格式、适配器契约、哨兵/hook 机制、抽取规则)同步更新 `DESIGN.md`,保持文档与代码互相印证。
 
-**用户文档同步**:`README.md`(英文)与 `README.zh-CN.md`(简体中文)是同等权威的面向用户说明,不能漂移;完整示例 `docs/USAGE.md` 与 `docs/USAGE.zh-CN.md` 也遵循同一规则。任何用户可见变化——包括定位/能力/非目标、支持的 agent/平台/依赖、安装/更新/卸载、版本与发布方式、触发指令或 CLI 语法与输出、示例及截图、数据路径、隐私安全、兼容性、已知限制与故障排查——都必须在同一提交中同步更新中英双版;仅内部重构且用户体验不变时可不更新。双版须保持相同的章节顺序和等价的事实、命令、选项、路径、版本、表格、代码块、链接与截图表达(图片可共用,替代文本翻译为对应语言),只翻译自然语言;新增、删除、重排或改写用户文档内容也禁止只改一版。提交前逐节对照,并按当前代码、`DESIGN.md` 与 packaging 实际验证命令示例和截图内回显;任一版本未同步或无法验证都视为未完成。
+**用户文档同步**:`README.md`(简体中文,默认)与 `README.en.md`(英文)是同等权威的面向用户说明,不能漂移;完整示例 `docs/USAGE.md`(简体中文)与 `docs/USAGE.en.md`(英文)也遵循同一规则。任何用户可见变化——包括定位/能力/非目标、支持的 agent/平台/依赖、安装/更新/卸载、版本与发布方式、触发指令或 CLI 语法与输出、示例及截图、数据路径、隐私安全、兼容性、已知限制与故障排查——都必须在同一提交中同步更新中英双版;仅内部重构且用户体验不变时可不更新。双版须保持相同的章节顺序和等价的事实、命令、选项、路径、版本、表格、代码块、链接与截图表达(图片可共用,替代文本翻译为对应语言),只翻译自然语言;新增、删除、重排或改写用户文档内容也禁止只改一版。提交前逐节对照,并按当前代码、`DESIGN.md` 与 packaging 实际验证命令示例和截图内回显;任一版本未同步或无法验证都视为未完成。
 
 **提交前**:若当前 `VERSION` 已存在对应 `v<VERSION>` tag,package-impacting 变更(`bin/`、`adapters/`、`packaging/`、`scripts/package-plugins.sh`)必须显式递增根 `VERSION`;未打 tag 的发布候选允许在同一版本继续修复。不要手改 manifest version。随后跑 shellcheck、shfmt、actionlint 与 `tests/run.sh`,全绿才算完成——以闸门绿为准,不以“我觉得写好了”为准。测试随功能走:改抽取必带 fixture + 期望输出;改 drop/pickup/hook-prompt 必覆盖对应断言。`.dist/` 是生成物,不提交。
 
@@ -71,7 +71,7 @@ git tag "$release_tag"
 git push origin "$release_tag"
 ```
 
-`.github/workflows/publish-plugins.yml` 仅响应 `v*` tag。它验证 tag=`v$(cat VERSION)`、tag commit 属于 `origin/main`,重新跑完整静态检查和测试,生成自包含树,再用同仓库 `GITHUB_TOKEN` 非 force 推到 orphan `marketplace` 分支。发布任务串行排队;同版本不同内容、旧版本回退和非 fast-forward 推送都会失败。仓库默认 token 权限保持 read,只有该 workflow 显式声明 `contents:write`;无需 PAT。当前仓库为 private,远程安装/更新者必须有 GitHub 读取权限。
+`.github/workflows/publish-plugins.yml` 仅响应 `v*` tag。它验证 tag=`v$(cat VERSION)`、tag commit 属于 `origin/main`,重新跑完整静态检查和测试,生成自包含树,再用同仓库 `GITHUB_TOKEN` 非 force 推到 orphan `marketplace` 分支。发布任务串行排队;同版本不同内容、旧版本回退和非 fast-forward 推送都会失败。仓库默认 token 权限保持 read,只有该 workflow 显式声明 `contents:write`;无需 PAT。当前仓库为 public,远程安装/更新无需额外 GitHub 权限。
 
 ## 硬约束
 
@@ -93,6 +93,6 @@ git push origin "$release_tag"
 
 - 脚本开头 `set -uo pipefail`(**不用 `set -e`**:适配器/命令非零返回是正常控制流)
 - 函数前缀:核心用 `cmd_`/`_`,适配器用 `<工具名>_`(如 `claude_code_extract`)
-- 内部文档(`.md`)用中文;面向用户的 `README.md`/`docs/USAGE.md` 用英文,对应 `.zh-CN.md` 用简体中文且双版同步。**代码注释、报错文本、脚本所有 stderr/stdout 输出一律英文**,标识符用英文
+- 内部文档(`.md`)用中文;面向用户的 README/USAGE 各提供中英双版并保持同步:默认 `README.md`/`docs/USAGE.md` 用简体中文,`README.en.md`/`docs/USAGE.en.md` 用英文。**代码注释、报错文本、脚本所有 stderr/stdout 输出一律英文**,标识符用英文
 - 注释只写"为什么"与约束,不写"这行在做什么"
 - `shellcheck` 与 `shfmt` 提交前必须干净(CI 门禁)
