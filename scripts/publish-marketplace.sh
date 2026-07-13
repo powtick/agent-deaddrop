@@ -36,8 +36,12 @@ version_is_lower() {
 
 validate_publish_tree() {
 	local package="$1" version symlink entry
-	[ -d "$package" ] && [ ! -L "$package" ] || die "package directory does not exist or is a symlink: $package"
-	[ -f "$package/VERSION" ] && [ ! -L "$package/VERSION" ] || die "package is missing a regular VERSION file"
+	if [ ! -d "$package" ] || [ -L "$package" ]; then
+		die "package directory does not exist or is a symlink: $package"
+	fi
+	if [ ! -f "$package/VERSION" ] || [ -L "$package/VERSION" ]; then
+		die "package is missing a regular VERSION file"
+	fi
 	version="$(cat "$package/VERSION")"
 	is_version "$version" || die "package VERSION '$version' is not stable semantic version X.Y.Z"
 	for entry in "$package"/* "$package"/.[!.]* "$package"/..?*; do
@@ -64,7 +68,9 @@ validate_publish_tree() {
 	printf '%s\n' "$version"
 }
 
-[ "$#" -ge 1 ] && [ "$#" -le 4 ] || die "usage: scripts/publish-marketplace.sh <package-directory> [branch] [repository] [source-ref]"
+if [ "$#" -lt 1 ] || [ "$#" -gt 4 ]; then
+	die "usage: scripts/publish-marketplace.sh <package-directory> [branch] [repository] [source-ref]"
+fi
 PACKAGE_INPUT="$1"
 BRANCH="${2:-marketplace}"
 REPOSITORY_INPUT="${3:-$SCRIPT_ROOT}"

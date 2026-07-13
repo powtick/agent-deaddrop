@@ -28,7 +28,9 @@ read_version() {
 
 require_regular_file() {
 	local path="$1" label="$2"
-	[ -f "$path" ] && [ ! -L "$path" ] || die "$label must be a regular file: $path"
+	if [ ! -f "$path" ] || [ -L "$path" ]; then
+		die "$label must be a regular file: $path"
+	fi
 }
 
 find_manifest() {
@@ -43,7 +45,9 @@ find_manifest() {
 validate_package() {
 	local output="$1" version="$2" symlink plugin_root tool manifest found json_file adapter_count
 
-	[ -d "$output" ] && [ ! -L "$output" ] || die "package output is not a regular directory: $output"
+	if [ ! -d "$output" ] || [ -L "$output" ]; then
+		die "package output is not a regular directory: $output"
+	fi
 	require_regular_file "$output/VERSION" "package VERSION"
 	[ "$(cat "$output/VERSION")" = "$version" ] || die "package VERSION does not match source VERSION $version"
 	require_regular_file "$output/.agents/plugins/marketplace.json" "Codex marketplace catalog"
@@ -122,7 +126,9 @@ VERSION="$(read_version)" || exit $?
 OUTPUT_INPUT="${1:-$ROOT/.dist/marketplace}"
 OUTPUT_PARENT="$(dirname "$OUTPUT_INPUT")"
 OUTPUT_BASE="$(basename "$OUTPUT_INPUT")"
-[ "$OUTPUT_BASE" != "." ] && [ "$OUTPUT_BASE" != "/" ] && [ -n "$OUTPUT_BASE" ] || die "unsafe output directory: $OUTPUT_INPUT"
+case "$OUTPUT_BASE" in
+"" | . | /) die "unsafe output directory: $OUTPUT_INPUT" ;;
+esac
 mkdir -p "$OUTPUT_PARENT" || die "cannot create output parent: $OUTPUT_PARENT"
 OUTPUT_PARENT="$(cd "$OUTPUT_PARENT" && pwd)" || die "cannot resolve output parent: $OUTPUT_PARENT"
 OUTPUT="$OUTPUT_PARENT/$OUTPUT_BASE"
@@ -166,8 +172,9 @@ validate_package "$STAGE" "$VERSION"
 
 if [ -e "$OUTPUT" ]; then
 	[ -d "$OUTPUT" ] || die "refusing to replace a non-directory output: $OUTPUT"
-	[ -f "$OUTPUT/VERSION" ] && [ -f "$OUTPUT/.agents/plugins/marketplace.json" ] && [ -f "$OUTPUT/.claude-plugin/marketplace.json" ] ||
+	if [ ! -f "$OUTPUT/VERSION" ] || [ ! -f "$OUTPUT/.agents/plugins/marketplace.json" ] || [ ! -f "$OUTPUT/.claude-plugin/marketplace.json" ]; then
 		die "refusing to replace a directory that is not a generated marketplace: $OUTPUT"
+	fi
 	BACKUP="$OUTPUT_PARENT/.${OUTPUT_BASE}.old.$$"
 	[ ! -e "$BACKUP" ] || die "temporary backup path already exists: $BACKUP"
 	mv "$OUTPUT" "$BACKUP" || die "cannot move the previous generated package aside"

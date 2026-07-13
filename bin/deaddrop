@@ -464,7 +464,9 @@ cmd_hook_prompt() {
 	body="${prompt#>>}"
 	body="${body#"${body%%[![:space:]]*}"}" # strip leading whitespace
 
-	[ -n "$cwd" ] && cd "$cwd" 2>/dev/null || true
+	if [ -n "$cwd" ]; then
+		cd "$cwd" 2>/dev/null || true
+	fi
 
 	case "$body" in
 	drop | drop\ *)
